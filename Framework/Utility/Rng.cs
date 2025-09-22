@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Foster.Framework;
 
@@ -80,9 +81,27 @@ public struct Rng
 	public int Sign() => Boolean() ? 1 : -1;
 	public bool Chance(float percent) => Float() <= percent;
 
-	public T Choose<T>(params ReadOnlySpan<T> choices)
-		=> choices[Int(choices.Length)];
+	public T Choose<T>(params ReadOnlySpan<T> choices) => choices[Int(choices.Length)];
+	public T Choose<T>(params T[] choices) => choices[Int(choices.Length)];
+	public T Choose<T>(params IList<T> choices) => choices[Int(choices.Count)];
 
 	public Point2 Shake() => new(Choose(-1, 0, 1), Choose(-1, 0, 1));
 	public float Angle() => Float(Calc.TAU);
+
+	public System.Numerics.Vector2 PointInside(in Rect rect)
+		=> rect.On(Float(1), Float(1));
+
+	public void Shuffle<T>(Span<T> span)
+	{
+		int n = span.Length;
+		while (n > 1) {
+			n--;
+			int k = Int(n + 1);
+			(span[k], span[n]) = (span[n], span[k]);
+		}
+	}
+	public void Shuffle<T>(T[] array) => Shuffle(array.AsSpan());
+	public void Shuffle<T>(List<T> list) => Shuffle(CollectionsMarshal.AsSpan(list));
+
+	public static Rng Randomized() => new((ulong)DateTime.Now.Ticks);
 }

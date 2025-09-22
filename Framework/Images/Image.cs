@@ -49,6 +49,11 @@ public class Image : IDisposable
 	}
 
 	/// <summary>
+	/// If the Image was disposed
+	/// </summary>
+	public bool IsDisposed { get; private set; }
+
+	/// <summary>
 	/// Gets a Pointer of the pixel data held by the Image
 	/// </summary>
 	public IntPtr Pointer => ptr;
@@ -128,8 +133,7 @@ public class Image : IDisposable
 	private unsafe void Load(Stream stream)
 	{
 		// get all the bytes
-		var data = new byte[stream.Length - stream.Position];
-		stream.ReadExactly(data);
+		var data = Calc.ReadAllBytes(stream);
 
 		// load image from byte data
 		nint mem;
@@ -144,11 +148,24 @@ public class Image : IDisposable
 			throw new Exception("Failed to load Image");
 
 		// update properties
-		Dispose();
+		Clear();
 		Width = w;
 		Height = h;
 		ptr = mem;
 		unmanaged = true;
+	}
+
+	private void Clear()
+	{
+		if (unmanaged)
+			Platform.ImageFree(ptr);
+		else if (handle.IsAllocated)
+			handle.Free();
+
+		handle = new();
+		ptr = new();
+		unmanaged = false;
+		Width = Height = 0;
 	}
 
 	/// <summary>
@@ -156,20 +173,9 @@ public class Image : IDisposable
 	/// </summary>
 	public void Dispose()
 	{
-		if (unmanaged)
-		{
-			Platform.ImageFree(ptr);
-		}
-		else if (handle.IsAllocated)
-		{
-			handle.Free();
-		}
-
-		handle = new();
-		ptr = new();
-		unmanaged = false;
-		Width = Height = 0;
+		Clear();
 		GC.SuppressFinalize(this);
+		IsDisposed = true;
 	}
 
 	/// <summary>

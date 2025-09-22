@@ -12,6 +12,7 @@ public sealed class Window : IDrawableTarget
 	private string title;
 	private readonly App app;
 	private readonly Exception closedWindowException = new("The Window has been Closed");
+	private readonly Exception notOnMainThreadException = new("This method may only be called from the Main thread");
 	object? IDrawableTarget.Surface => this;
 
 	/// <summary>
@@ -32,12 +33,36 @@ public sealed class Window : IDrawableTarget
 		get => title;
 		set
 		{
-			if (title != value)
-			{
-				title = value;
-				if (Handle != nint.Zero)
-					SDL_SetWindowTitle(Handle, value);
-			}
+			// update title
+			if (title == value)
+				return;
+			title = value;
+
+			// apply title
+			if (app.IsMainThread())
+				ApplyTitle();
+			else
+				app.RunOnMainThread(ApplyTitle);
+		}
+	}
+
+	/// <summary>
+	/// The Window Position
+	/// </summary>
+	public Point2 Position
+	{
+		get
+		{
+			if (Handle == nint.Zero)
+				throw closedWindowException;
+			SDL_GetWindowPosition(Handle, out var x, out var y);
+			return new(x, y);
+		}
+		set
+		{
+			if (Handle == nint.Zero)
+				throw closedWindowException;
+			SDL_SetWindowPosition(Handle, value.X, value.Y);
 		}
 	}
 
@@ -399,6 +424,14 @@ public sealed class Window : IDrawableTarget
 			app.RunOnMainThread(StopTextInput);
 		}
 	}
+	
+	/// <summary>
+	/// Brings focus to the Window
+	/// </summary>
+	public void Focus()
+	{
+		SDL_RaiseWindow(Handle);
+	}
 
 	internal void OnEvent(SDL_EventType ev)
 	{
@@ -448,6 +481,7 @@ public sealed class Window : IDrawableTarget
 		SDL_ShowWindow(Handle);
 		SDL_SetWindowFullscreenMode(Handle, ref Unsafe.NullRef<SDL_DisplayMode>());
 		SDL_SetWindowBordered(Handle, true);
+		SDL_RaiseWindow(Handle);
 		SDL_ShowCursor();
 	}
 
@@ -460,5 +494,11 @@ public sealed class Window : IDrawableTarget
 	{
 		SDL_DestroyWindow(Handle);
 		Handle = nint.Zero;
+	}
+
+	private void ApplyTitle()
+	{
+		if (Handle != nint.Zero)
+			SDL_SetWindowTitle(Handle, title);
 	}
 }

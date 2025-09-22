@@ -283,7 +283,7 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 	public readonly bool Overlaps(in Line line) => this.Overlaps(line, out _);
 
 	/// <summary>
-	/// Get the rectangle intersection of two rectangles
+	/// Get the largest rectangle full contained by both rectangles
 	/// </summary>
 	public readonly Rect GetIntersection(in Rect against)
 	{
@@ -520,10 +520,13 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 
 	#endregion
 
+	#region Static Constructors
+
 	/// <summary>
-	/// Get the rect as a tuple of floats
+	/// Get a rect centered around a position
 	/// </summary>
-	public readonly (float X, float Y, float Width, float Height) Deconstruct() => (X, Y, Width, Height);
+	public static Rect Centered(float centerX, float centerY, float width, float height)
+		=> new(centerX - width / 2, centerY - height / 2, width, height);
 
 	/// <summary>
 	/// Get a rect centered around a position
@@ -536,6 +539,18 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 	/// </summary>
 	public static Rect Centered(in Vector2 center, in Vector2 size)
 		=> new(center.X - size.X / 2, center.Y - size.Y / 2, size.X, size.Y);
+
+	/// <summary>
+	/// Get a rect centered around (0, 0)
+	/// </summary>
+	public static Rect Centered(in Vector2 size)
+		=> new(-size.X/2, -size.Y/2, size.X, size.Y);
+
+	/// <summary>
+	/// Get a rect centered around (0, 0)
+	/// </summary>
+	public static Rect Centered(float width, float height)
+		=> new(-width/2, -height/2, width, height);
 
 	/// <summary>
 	/// Get a rect justified around the origin point
@@ -564,6 +579,18 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 		return rect;
 	}
 
+	#endregion
+
+	/// <summary>
+	/// Get the rect as a tuple of floats
+	/// </summary>
+	public readonly (float X, float Y, float Width, float Height) Deconstruct() => (X, Y, Width, Height);
+
+	/// <summary>
+	/// Get the rect as a tuple of floats
+	/// </summary>
+	public readonly void Deconstruct(out float x, out float y, out float width, out float height) => (x, y, width, height) = (X, Y, Width, Height);
+
 	public readonly bool Equals(Rect other) => this == other;
 	public readonly override bool Equals(object? obj) => (obj is Rect other) && (this == other);
 	public readonly override int GetHashCode() => HashCode.Combine(X, Y, Width, Height);
@@ -584,7 +611,11 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 	public static Rect operator /(in Rect a, int scaler) => new Rect(a.X / scaler, a.Y / scaler, a.Width / scaler, a.Height / scaler).ValidateSize();
 	public static Rect operator *(in Rect a, in Vector2 scaler) => a.Scale(scaler);
 	public static Rect operator /(in Rect a, in Vector2 scaler) => new Rect(a.X / scaler.X, a.Y / scaler.Y, a.Width / scaler.X, a.Height / scaler.Y).ValidateSize();
+
+	// TODO: remove once Facing is deleted
+#pragma warning disable 0618
 	public static Rect operator *(in Rect rect, Facing flipX) => flipX == Facing.Right ? rect : rect.ScaleX(-1);
+#pragma warning restore 0618
 
 	public class JsonConverter : JsonConverter<Rect>
 	{
