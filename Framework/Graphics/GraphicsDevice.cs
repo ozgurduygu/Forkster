@@ -38,7 +38,17 @@ public abstract class GraphicsDevice
 	/// </summary>
 	public abstract bool VSync { get; set; }
 
-	internal GraphicsDevice(App app) => App = app;
+	/// <summary>
+    /// Built-in Default Materials
+    /// </summary>
+	public DefaultResources Defaults { get; private set; } = null!;
+
+	internal GraphicsDevice(App app)
+	{
+		App = app;
+		Defaults = new(this);
+	}
+
 	internal abstract void CreateDevice(in AppFlags flags);
 	internal abstract void DestroyDevice();
 	internal abstract void Startup(nint window);
@@ -76,12 +86,15 @@ public abstract class GraphicsDevice
 		// that is more dynamic is just a warning.
 
 		var mat = command.Material ?? throw new Exception("Attempting to render with a null Material");
-		var shader = mat.Shader;
 		var target = command.Target;
 
 		// invalid shader state
-		if (shader == null || shader.IsDisposed)
-			throw new Exception("Attempting to render a null or disposed Shader");
+		if (mat.Vertex.Shader == null || mat.Vertex.Shader.IsDisposed)
+			throw new Exception("Attempting to render a null or disposed Vertex Shader");
+
+		// invalid shader state
+		if (mat.Fragment.Shader == null || mat.Fragment.Shader.IsDisposed)
+			throw new Exception("Attempting to render a null or disposed Fragment Shader");
 
 		// invalid target state
 		if (target == null || (target is Target t && t.IsDisposed))

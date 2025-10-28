@@ -11,6 +11,55 @@ public sealed class Input
 	public delegate void ControllerDisconnectedFn(ControllerID id);
 
 	/// <summary>
+	/// What kind of input is enabled
+	/// </summary>
+	[Flags]
+	public enum EnabledFlags
+	{
+		None = 0,
+
+		/// <summary>
+		/// Enables Keyboard key input
+		/// </summary>
+		KeyboardKeys = 1 << 0,
+
+		/// <summary>
+		/// Enables Keyboard text input if <see cref="Window.StartTextInput"/> was called.
+		/// </summary>
+		Text = 1 << 1,
+
+		/// <summary>
+		/// Enables Controller Input
+		/// </summary>
+		ControllerButtons = 1 << 2,
+
+		/// <summary>
+		/// Enables Controller Input
+		/// </summary>
+		ControllerAxis = 1 << 3,
+
+		/// <summary>
+		/// Enables Mouse Button Input
+		/// </summary>
+		MouseButtons = 1 << 4,
+
+		/// <summary>
+		/// Enables Mouse Motion Input
+		/// </summary>
+		MouseMotion = 1 << 5,
+
+		/// <summary>
+		/// Enables Mouse Motion Input
+		/// </summary>
+		MouseWheel = 1 << 6,
+
+		/// <summary>
+		/// Enables all Input
+		/// </summary>
+		All = ~0
+	}
+
+	/// <summary>
 	/// Default delay before a key or button starts repeating, in seconds
 	/// </summary>
 	public static float RepeatDelay = 0.4f;
@@ -72,10 +121,9 @@ public sealed class Input
 	public readonly HashSet<string> BindingFilters = [];
 
 	/// <summary>
-	/// If the Input Module should Receive Events.
-	/// If this is false, the Input will essentially not update between frames.
+	/// What types of input this module recieves and updates
 	/// </summary>
-	public bool ReceiveEvents = true;
+	public EnabledFlags Enabled = EnabledFlags.All;
 
 	/// <summary>
 	/// Holds references to all VirtualInputs so they can be updated.
@@ -93,7 +141,7 @@ public sealed class Input
 	}
 
 	/// <summary>
-	/// Creates an Input Module that recieves the same events as this one.
+	/// Creates an Input Module that receives the same events as this one.
 	/// </summary>
 	public Input CreateEcho()
 	{
@@ -239,6 +287,16 @@ public sealed class Input
 				version
 			);
 
+			// notify virtual devices
+			foreach (var virtualInput in virtualInputs)
+			{
+				if (virtualInput.TryGetTarget(out var target) &&
+					target is VirtualDevice device &&
+					device.ControllerIndex == i)
+					device.ControllerConnected();
+			}
+
+			// notify general consumers
 			OnControllerConnected?.Invoke(id);
 			break;
 		}
@@ -246,12 +304,26 @@ public sealed class Input
 
 	internal void DisconnectController(ControllerID id)
 	{
-		foreach (var it in NextState.Controllers)
-			if (it.ID == id)
+		for (int i = 0; i < InputState.MaxControllers; i++)
+		{
+			var it = NextState.Controllers[i];
+			if (it.ID != id)
+				continue;
+
+			it.Disconnect();
+
+			// notify virtual devices
+			foreach (var virtualInput in virtualInputs)
 			{
-				it.Disconnect();
-				OnControllerDisconnected?.Invoke(id);
+				if (virtualInput.TryGetTarget(out var target) &&
+					target is VirtualDevice device &&
+					device.ControllerIndex == i)
+					device.ControllerDisconnected();
 			}
+
+			// notify general consumers
+			OnControllerDisconnected?.Invoke(id);
+		}
 	}
 
 	internal void Step(in Time time)

@@ -20,6 +20,12 @@ public struct Line(Vector2 from, Vector2 to) : IConvexShape, IEquatable<Line>
 	public readonly float LengthSquared => (To - From).LengthSquared();
 	public readonly Vector2 Normal => (To - From).Normalized();
 
+	public Line(float x1, float y1, float x2, float y2)
+		: this(new(x1, y1), new Vector2(x2, y2))
+	{
+
+	}
+
 	public readonly Vector2 GetAxis(int index)
 	{
 		var axis = (To - From).Normalized();
@@ -77,26 +83,32 @@ public struct Line(Vector2 from, Vector2 to) : IConvexShape, IEquatable<Line>
 		=> circle.Overlaps(this);
 
 	public readonly bool Intersects(in Line other)
-	{
-		Vector2 b = To - From;
-		Vector2 d = other.To - other.From;
-		float bDotDPerp = b.X * d.Y - b.Y * d.X;
+		=> Intersects(other, out _);
+
+    public readonly bool Intersects(in Line other, out Vector2 point)
+    {
+		point = default;
+
+		var b = To - From;
+		var d = other.To - other.From;
+		var bDotDPerp = b.X * d.Y - b.Y * d.X;
 
 		// if b dot d == 0, it means the lines are parallel so have infinite intersection points
 		if (bDotDPerp == 0)
 			return false;
 
-		Vector2 c = other.From - From;
-		float t = (c.X * d.Y - c.Y * d.X) / bDotDPerp;
+		var c = other.From - From;
+		var t = (c.X * d.Y - c.Y * d.X) / bDotDPerp;
 		if (t is < 0 or > 1)
 			return false;
 
-		float u = (c.X * b.Y - c.Y * b.X) / bDotDPerp;
+		var u = (c.X * b.Y - c.Y * b.X) / bDotDPerp;
 		if (u is < 0 or > 1)
 			return false;
 
+		point = From + b * t;
 		return true;
-	}
+    }
 
 	public static Line operator +(Line a, Vector2 b) => new(a.From + b, a.To + b);
 	public static Line operator -(Line a, Vector2 b) => new(a.From - b, a.To - b);

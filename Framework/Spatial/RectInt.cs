@@ -241,6 +241,12 @@ public struct RectInt(int x, int y, int w, int h) : IConvexShape, IEquatable<Rec
 
 	}
 
+	public RectInt(in Point2 size)
+		: this(0, 0, size.X, size.Y)
+	{
+
+	}
+
 	public RectInt(in Point2 pos, int w, int h)
 		: this(pos.X, pos.Y, w, h)
 	{
@@ -697,32 +703,51 @@ public struct RectInt(int x, int y, int w, int h) : IConvexShape, IEquatable<Rec
 	/// <summary>
 	/// Get a rect centered around a position
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static RectInt Centered(int centerX, int centerY, int width, int height)
 		=> new(centerX - width / 2, centerY - height / 2, width, height);
 
 	/// <summary>
 	/// Get a rect centered around a position
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static RectInt Centered(in Point2 center, int width, int height)
 		=> new(center.X - width / 2, center.Y - height / 2, width, height);
 
 	/// <summary>
 	/// Get a rect centered around a position
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static RectInt Centered(in Point2 center, in Point2 size)
 		=> new(center.X - size.X / 2, center.Y - size.Y / 2, size.X, size.Y);
 
 	/// <summary>
 	/// Get a rect centered around (0, 0)
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static RectInt Centered(in Point2 size)
 		=> new(-size.X / 2, -size.Y / 2, size.X, size.Y);
 
 	/// <summary>
 	/// Get a rect centered around (0, 0)
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static RectInt Centered(int width, int height)
 		=> new(-width / 2, -height / 2, width, height);
+
+	/// <summary>
+	/// Get a rect justified around the origin point
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static RectInt Justified(in Point2 origin, int width, int height, float justifyX, float justifyY)
+		=> new(origin.X - Calc.Round(justifyX * width), origin.Y - Calc.Round(justifyY * height), width, height);
+
+	/// <summary>
+	/// Get a rect justified around the origin point
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static RectInt Justified(in Point2 origin, in Point2 size, in Vector2 justify)
+		=> new(origin.X - Calc.Round(justify.X * size.X), origin.Y - Calc.Round(justify.Y * size.Y), size.X, size.Y);
 
 	/// <summary>
 	/// Get the rect with positive width and height that stretches from point a to point b
@@ -818,7 +843,7 @@ public struct RectInt(int x, int y, int w, int h) : IConvexShape, IEquatable<Rec
 	public static RectInt operator /(in RectInt rect, in Point2 scaler)
 		=> new RectInt(rect.X / scaler.X, rect.Y / scaler.Y, rect.Width / scaler.X, rect.Height / scaler.Y).ValidateSize();
 	public static RectInt operator *(in RectInt rect, Cardinal rotation) => rect.Rotate(rotation);
-	
+
 	// TODO: remove once Facing is deleted
 #pragma warning disable 0618
 	public static RectInt operator *(in RectInt rect, Facing flipX) => flipX == Facing.Right ? rect : rect.ScaleX(-1);

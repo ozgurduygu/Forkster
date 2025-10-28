@@ -249,6 +249,12 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 
 	}
 
+	public Rect(in Vector2 size)
+		: this(0, 0, size.X, size.Y)
+	{
+
+	}
+
 	public Rect(in Vector2 pos, float w, float h)
 		: this(pos.X, pos.Y, w, h)
 	{
@@ -357,6 +363,10 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public readonly RectInt Int() => new((int)X, (int)Y, (int)Width, (int)Height);
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public readonly Rect JustifiedAt(in Vector2 pos, in Vector2 justify)
+		=> new(pos.X - Width * justify.X, pos.Y - Height * justify.Y, Width, Height);
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public readonly Rect At(in Vector2 pos) => new(pos.X, pos.Y, Width, Height);
@@ -525,42 +535,49 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 	/// <summary>
 	/// Get a rect centered around a position
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Rect Centered(float centerX, float centerY, float width, float height)
 		=> new(centerX - width / 2, centerY - height / 2, width, height);
 
 	/// <summary>
 	/// Get a rect centered around a position
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Rect Centered(in Vector2 center, float width, float height)
 		=> new(center.X - width / 2, center.Y - height / 2, width, height);
 
 	/// <summary>
 	/// Get a rect centered around a position
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Rect Centered(in Vector2 center, in Vector2 size)
 		=> new(center.X - size.X / 2, center.Y - size.Y / 2, size.X, size.Y);
 
 	/// <summary>
 	/// Get a rect centered around (0, 0)
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Rect Centered(in Vector2 size)
 		=> new(-size.X/2, -size.Y/2, size.X, size.Y);
 
 	/// <summary>
 	/// Get a rect centered around (0, 0)
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Rect Centered(float width, float height)
 		=> new(-width/2, -height/2, width, height);
 
 	/// <summary>
 	/// Get a rect justified around the origin point
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Rect Justified(in Vector2 origin, float width, float height, float justifyX, float justifyY)
 		=> new(origin.X - (justifyX * width), origin.Y - (justifyY * height), width, height);
 
 	/// <summary>
 	/// Get a rect justified around the origin point
 	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Rect Justified(in Vector2 origin, in Vector2 size, in Vector2 justify)
 		=> new(origin.X - (justify.X * size.X), origin.Y - (justify.Y * size.Y), size.X, size.Y);
 

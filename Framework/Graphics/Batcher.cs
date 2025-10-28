@@ -42,12 +42,6 @@ public class Batcher : IDisposable
 	public readonly GraphicsDevice GraphicsDevice;
 
 	/// <summary>
-	/// The Default shader used by the Batcher.
-	/// TODO: this shouldn't be static, but should be shared between sprite batchers...
-	/// </summary>
-	private static Shader? DefaultShader;
-
-	/// <summary>
 	/// The current Matrix Value of the Batcher
 	/// </summary>
 	public Matrix3x2 Matrix = Matrix3x2.Identity;
@@ -77,12 +71,11 @@ public class Batcher : IDisposable
 	/// </summary>
 	public int BatchCount => batches.Count + (currentBatch.Elements > 0 ? 1 : 0);
 
-	private readonly Material defaultMaterial;
 	private readonly Stack<Matrix3x2> matrixStack = [];
 	private readonly Stack<RectInt?> scissorStack = [];
 	private readonly Stack<BlendMode> blendStack = [];
 	private readonly Stack<TextureSampler> samplerStack = [];
-	private readonly Stack<Material> materialStack = [];
+	private readonly Stack<Material?> materialStack = [];
 	private readonly Stack<int> layerStack = [];
 	private readonly Stack<Color> modeStack = [];
 	private readonly List<Batch> batches = [];
@@ -90,6 +83,7 @@ public class Batcher : IDisposable
 	private readonly Queue<Material> materialsPool = [];
 	private readonly Mesh<BatcherVertex, int> mesh;
 
+	private Material? defaultMaterial;
 	private Color mode = new(255, 0, 0, 0);
 	private Batch currentBatch;
 	private BatcherVertex[] vertexBuffer = [];
@@ -103,10 +97,10 @@ public class Batcher : IDisposable
 	private static readonly Color WashMode = new(0, 255, 0, 0);
 	private static readonly Color FillMode = new(0, 0, 255, 0);
 
-	private struct Batch(Material material, BlendMode blend, Texture? texture, TextureSampler sampler, int offset, int elements)
+	private struct Batch(Material? material, BlendMode blend, Texture? texture, TextureSampler sampler, int offset, int elements)
 	{
 		public int Layer = 0;
-		public Material Material = material;
+		public Material? Material = material;
 		public BlendMode Blend = blend;
 		public Texture? Texture = texture;
 		public RectInt? Scissor = null;
@@ -118,7 +112,6 @@ public class Batcher : IDisposable
 	public Batcher(GraphicsDevice graphicsDevice, string? name = null)
 	{
 		GraphicsDevice = graphicsDevice;
-		defaultMaterial = new();
 		mesh = new Mesh<BatcherVertex>(graphicsDevice, name: name);
 		Clear();
 	}
@@ -155,7 +148,7 @@ public class Batcher : IDisposable
 		vertexCount = 0;
 		indexCount = 0;
 		currentBatchInsert = 0;
-		currentBatch = new Batch(defaultMaterial, BlendMode.Premultiply, null, new(), 0, 0);
+		currentBatch = new Batch(null, BlendMode.Premultiply, null, new(), 0, 0);
 		mode = new Color(255, 0, 0, 0);
 		batches.Clear();
 		matrixStack.Clear();
@@ -216,59 +209,65 @@ public class Batcher : IDisposable
 		Upload();
 
 		// make sure default shader and material are valid
-		if (DefaultShader == null || DefaultShader.IsDisposed)
-			DefaultShader = new BatcherShader(GraphicsDevice);
-		defaultMaterial.Shader = DefaultShader;
+		defaultMaterial ??= GraphicsDevice.Defaults.BatchMaterial.Clone();
 
 		// render batches
 		for (int i = 0; i < batches.Count; i++)
 		{
 			// remaining elements in the current batch
 			if (currentBatchInsert == i && currentBatch.Elements > 0)
-				RenderBatch(target, currentBatch, matrix, viewport, scissor);
+				RenderBatch(GraphicsDevice, defaultMaterial, mesh, target, currentBatch, matrix, viewport, scissor);
 
 			// render the batch
-			RenderBatch(target, batches[i], matrix, viewport, scissor);
+			RenderBatch(GraphicsDevice, defaultMaterial, mesh, target, batches[i], matrix, viewport, scissor);
 		}
 
 		// remaining elements in the current batch
 		if (currentBatchInsert == batches.Count && currentBatch.Elements > 0)
-			RenderBatch(target, currentBatch, matrix, viewport, scissor);
-	}
+			RenderBatch(GraphicsDevice, defaultMaterial, mesh, target, currentBatch, matrix, viewport, scissor);
 
-	private void RenderBatch(IDrawableTarget target, in Batch batch, in Matrix4x4 matrix, in RectInt? viewport, in RectInt? scissor)
-	{
-		// get trimmed scissor value
-		var trimmed = scissor;
-		if (batch.Scissor.HasValue && trimmed.HasValue)
-			trimmed = batch.Scissor.Value.GetIntersection(trimmed.Value);
-		else if (batch.Scissor.HasValue)
-			trimmed = batch.Scissor;
-
-		// don't render if we're going to clip the entire visible contents
-		if (trimmed.HasValue && (trimmed.Value.Width <= 0 || trimmed.Value.Height <= 0))
-			return;
-
-		var texture = batch.Texture != null && !batch.Texture.IsDisposed ? batch.Texture : null;
-		var mat = batch.Material;
-
-		// set Fragment Sampler 0 to the texture to be drawn
-		mat.Fragment.Samplers[0] = new(texture, batch.Sampler);
-
-		// set Vertex Matrix, always assumed to be in slot 0 as the first data
-		mat.Vertex.SetUniformBuffer(matrix);
-
-		GraphicsDevice.Draw(new(target, mesh, mat)
+		static void RenderBatch(
+			GraphicsDevice device,
+			Material defaultMaterial,
+			Mesh mesh,
+			IDrawableTarget target,
+			in Batch batch,
+			in Matrix4x4 matrix,
+			in RectInt? viewport,
+			in RectInt? scissor)
 		{
-			Viewport = viewport,
-			Scissor = trimmed,
-			BlendMode = batch.Blend,
-			IndexOffset = batch.Offset * 3,
-			IndexCount = batch.Elements * 3,
-			DepthWriteEnabled = false,
-			DepthTestEnabled = false,
-			CullMode = CullMode.None
-		});
+			// get trimmed scissor value
+			var trimmed = scissor;
+			if (batch.Scissor.HasValue && trimmed.HasValue)
+				trimmed = batch.Scissor.Value.GetIntersection(trimmed.Value);
+			else if (batch.Scissor.HasValue)
+				trimmed = batch.Scissor;
+
+			// don't render if we're going to clip the entire visible contents
+			if (trimmed.HasValue && (trimmed.Value.Width <= 0 || trimmed.Value.Height <= 0))
+				return;
+
+			var texture = batch.Texture != null && !batch.Texture.IsDisposed ? batch.Texture : null;
+			var mat = batch.Material ?? defaultMaterial;
+
+			// set Fragment Sampler 0 to the texture to be drawn
+			mat.Fragment.Samplers[0] = new(texture, batch.Sampler);
+
+			// set Vertex Matrix, always assumed to be in slot 0 as the first data
+			mat.Vertex.SetUniformBuffer(matrix);
+
+			device.Draw(new(target, mesh, mat)
+			{
+				Viewport = viewport,
+				Scissor = trimmed,
+				BlendMode = batch.Blend,
+				IndexOffset = batch.Offset * 3,
+				IndexCount = batch.Elements * 3,
+				DepthWriteEnabled = false,
+				DepthTestEnabled = false,
+				CullMode = CullMode.None
+			});
+		}
 	}
 
 	#endregion
@@ -331,7 +330,7 @@ public class Batcher : IDisposable
 		currentBatchInsert = insert;
 	}
 
-	private void SetMaterial(Material material)
+	private void SetMaterial(Material? material)
 	{
 		if (currentBatch.Elements == 0)
 		{
@@ -383,7 +382,7 @@ public class Batcher : IDisposable
 	}
 
 	/// <summary>
-	/// Pushes a relative draw layer, with lower values being rendered first.
+	/// Pushes a relative draw layer, with lower values being rendered later (ie. above).
 	/// Note that this is not very performant and should generally be avoided.
 	/// </summary>
 	public void PushLayer(int delta)
@@ -411,14 +410,22 @@ public class Batcher : IDisposable
 	/// </summary>
 	public void PushMaterial(Material material)
 	{
-		if (material.Shader == null)
-			throw new Exception("Material must have a Shader assigned");
+		if (material.Fragment.Shader == null)
+			throw new Exception("Material must have a Fragment assigned");
 
 		materialStack.Push(currentBatch.Material);
 		if (!materialsPool.TryDequeue(out var copy))
 			copy = new Material();
 		materialsUsed.Add(copy);
 		material.CopyTo(copy);
+
+		// allow fallback to default vertex shader
+		if (copy.Vertex.Shader == null)
+		{
+			defaultMaterial ??= GraphicsDevice.Defaults.BatchMaterial.Clone();
+			copy.Vertex.Shader = defaultMaterial.Vertex.Shader;
+		}
+
 		SetMaterial(copy);
 	}
 
