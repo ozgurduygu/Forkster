@@ -582,13 +582,31 @@ public static class Calc
 	/// Clamps a number between two values
 	/// </summary>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static int Clamp(ref int value, int min, int max) => value = Math.Min(Math.Max(value, min), max);
+
+	/// <summary>
+	/// Clamps a number between two values
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static float Clamp(float value, float min, float max) => Math.Min(Math.Max(value, min), max);
+
+	/// <summary>
+	/// Clamps a number between two values
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static float Clamp(ref float value, float min, float max) => value = Math.Min(Math.Max(value, min), max);
 
 	/// <summary>
 	/// Clamps a number between 0 and 1
 	/// </summary>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static float Clamp(float value) => Math.Min(Math.Max(value, 0), 1);
+
+	/// <summary>
+	/// Clamps a number between 0 and 1
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static float Clamp(ref float value) => value = Math.Min(Math.Max(value, 0), 1);
 
 	/// <summary>
 	/// Shorthand to MathF.Round but returns an Integer
@@ -1969,18 +1987,23 @@ public static class Calc
 
 	#region Interpolation
 
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static float Lerp(float a, float b, float percent)
-		=> (a + (b - a) * percent);
+		=> float.Lerp(a, b, percent);
 
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static float Bezier(float a, float b, float c, float t)
 		=> Lerp(Lerp(a, b, t), Lerp(b, c, t), t);
 
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static float Bezier(float a, float b, float c, float d, float t)
 		=> Bezier(Lerp(a, b, t), Lerp(b, c, t), Lerp(c, d, t), t);
 
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Vector2 Bezier(Vector2 a, Vector2 b, Vector2 c, float t)
 		=> Vector2.Lerp(Vector2.Lerp(a, b, t), Vector2.Lerp(b, c, t), t);
 
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Vector2 Bezier(Vector2 a, Vector2 b, Vector2 c, Vector2 d, float t)
 		=> Bezier(Vector2.Lerp(a, b, t), Vector2.Lerp(b, c, t), Vector2.Lerp(c, d, t), t);
 

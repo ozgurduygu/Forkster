@@ -125,10 +125,16 @@ public class Material
 	public readonly Stage Fragment = new(ShaderStage.Fragment);
 
 	public Material() {}
+	
 	public Material(Shader? vertexShader, Shader? fragmentShader)
 	{
 		Vertex.Shader = vertexShader;
 		Fragment.Shader = fragmentShader;
+	}
+
+	public Material(Material from)
+	{
+		from.CopyTo(this);
 	}
 
 	/// <summary>
@@ -139,6 +145,12 @@ public class Material
 		Vertex.CopyTo(to.Vertex);
 		Fragment.CopyTo(to.Fragment);
 	}
+
+	/// <summary>
+	/// Copies the State of another Material onto this Material
+	/// </summary>
+	public void CopyFrom(Material from)
+		=> from.CopyTo(this);
 
 	/// <summary>
     /// Creates a Copy of this Material
