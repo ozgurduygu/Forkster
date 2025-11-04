@@ -52,10 +52,13 @@ internal sealed class InputProviderSDL(App app) : InputProvider, IDisposable
 		// get window properties
 		var windowSize = new Point2(App.Window.Width, App.Window.Height);
 		var windowSizeInPx = new Point2(App.Window.WidthInPixels, App.Window.HeightInPixels);
+		var windowPos = new Point2();
+		SDL_GetWindowPosition(App.Window.Handle, out windowPos.X, out windowPos.Y);
 
 		// use global mouse position so we can get it as it moves outside the window
 		var mouse = new Vector2();
-		SDL_GetMouseState(out mouse.X, out mouse.Y);
+		SDL_GetGlobalMouseState(out mouse.X, out mouse.Y);
+		mouse -= windowPos;
 
 		// scale it to the pixel coords
 		mouse = mouse / windowSize * windowSizeInPx;
