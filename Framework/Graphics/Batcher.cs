@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Numerics;
 
 namespace Foster.Framework;
@@ -647,6 +646,10 @@ public class Batcher : IDisposable
 			Quad(a + perp, b + perp, b - perp, a - perp, color);
 		}
 	}
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public void LineDashed(Line line, float lineWeight, Color color, float dashLength, float offsetPercent)
+		=> LineDashed(line.From, line.To, lineWeight, color, dashLength, offsetPercent);
 
 	#endregion
 

@@ -17,6 +17,19 @@ public struct Quad : IConvexShape, IEquatable<Quad>
 	private Vector2 normalDA;
 	private bool normalsDirty;
 
+	public Quad(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+	{
+		this.a = a;
+		this.b = b;
+		this.c = c;
+		this.d = d;
+		normalAB = normalBC = normalCD = normalDA = Vector2.Zero;
+		normalsDirty = true;
+	}
+
+	public Quad(in Rect rect)
+		: this(rect.TopLeft, rect.TopRight, rect.BottomRight, rect.BottomLeft) {}
+
 	public Vector2 A
 	{
 		readonly get => a;
@@ -105,20 +118,28 @@ public struct Quad : IConvexShape, IEquatable<Quad>
 		}
 	}
 
-	public readonly Vector2 Center => (a + b + c + d) / 4f;
+	public readonly Line AB => new(A, B);
+	public readonly Line BC => new(B, C);
+	public readonly Line CD => new(C, D);
+	public readonly Line DA => new(D, A);
 
-	public Quad(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+	public readonly Rect Bounds
 	{
-		this.a = a;
-		this.b = b;
-		this.c = c;
-		this.d = d;
-		normalAB = normalBC = normalCD = normalDA = Vector2.Zero;
-		normalsDirty = true;
+		get
+		{
+			var bounds = new Rect
+			{
+				X = Math.Min(a.X, Math.Min(b.X, Math.Min(c.X, d.X))),
+				Y = Math.Min(a.Y, Math.Min(b.Y, Math.Min(c.Y, d.Y)))
+			};
+			bounds.Width = Math.Max(a.X, Math.Max(b.X, Math.Max(c.X, d.X))) - bounds.X;
+			bounds.Height = Math.Max(a.Y, Math.Max(b.Y, Math.Max(c.Y, d.Y))) - bounds.Y;
+			return bounds;
+		}
 	}
 
-	public Quad(in Rect rect)
-		: this(rect.TopLeft, rect.TopRight, rect.BottomRight, rect.BottomLeft) {}
+	public readonly Vector2 Center => Bounds.Center;
+	public readonly Vector2 Average => (a + b + c + d) / 4f;
 
 	private void UpdateNormals()
 	{
@@ -192,17 +213,8 @@ public struct Quad : IConvexShape, IEquatable<Quad>
 		};
 	}
 
-	public readonly Rect BoundingRect()
-	{
-		var bounds = new Rect
-		{
-			X = Math.Min(a.X, Math.Min(b.X, Math.Min(c.X, d.X))),
-			Y = Math.Min(a.Y, Math.Min(b.Y, Math.Min(c.Y, d.Y)))
-		};
-		bounds.Width = Math.Max(a.X, Math.Max(b.X, Math.Max(c.X, d.X))) - bounds.X;
-		bounds.Height = Math.Max(a.Y, Math.Max(b.Y, Math.Max(c.Y, d.Y))) - bounds.Y;
-		return bounds;
-	}
+	[Obsolete("Use Quad.Bounds")]
+	public readonly Rect BoundingRect() => Bounds;
 
 	public readonly override bool Equals(object? obj) => obj is Quad other && this == other;
 	public readonly override int GetHashCode() => HashCode.Combine(a, b, c, d);
@@ -238,4 +250,42 @@ public struct Quad : IConvexShape, IEquatable<Quad>
 	public static bool operator !=(Quad a, Quad b) => a.a != b.a || a.b != b.b || a.c != b.c || a.d != b.d;
 
 	public bool Equals(Quad other) => a.Equals(other.a) && b.Equals(other.b) && c.Equals(other.c) && d.Equals(other.d);
+
+	#region Enumerate Lines
+
+	public readonly LineEnumerable Lines => new(this);
+
+	public readonly struct LineEnumerable(Quad Quad)
+	{
+		public LineEnumerator GetEnumerator() => new(Quad);
+	}
+
+	public struct LineEnumerator(Quad Quad)
+	{
+		public Line Current { get; private set; }
+		private int index = 0;
+
+		public bool MoveNext()
+		{
+			switch (index++)
+			{
+			case 0:
+				Current = Quad.AB;
+				return true;
+			case 1:
+				Current = Quad.BC;
+				return true;
+			case 2:
+				Current = Quad.CD;
+				return true;
+			case 3:
+				Current = Quad.DA;
+				return true;
+			default:
+				return false;
+			}
+		}
+	}
+
+	#endregion
 }

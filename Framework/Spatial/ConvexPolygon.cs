@@ -8,7 +8,7 @@ namespace Foster.Framework;
 /// A 2D Convex Polygon
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct ConvexPolygon : IConvexShape, IEnumerable<Vector2>
+public struct ConvexPolygon : IConvexShape, IEnumerable<Vector2>
 {
 	public const int MaxPoints = StackList32<Vector2>.TypeCapacity;
 	public StackList32<Vector2> Vertices;
@@ -54,6 +54,23 @@ public unsafe struct ConvexPolygon : IConvexShape, IEnumerable<Vector2>
 			}
 
 			return bounds;
+		}
+	}
+
+	public readonly Vector2 Center => Bounds.Center;
+
+	public readonly Vector2 Average
+	{
+		get
+		{
+			var p = Vector2.Zero;
+			if (Points > 0)
+			{
+				foreach (var pt in this)
+					p += pt;
+				p /= Points;
+			}
+			return p;
 		}
 	}
 
@@ -125,7 +142,7 @@ public unsafe struct ConvexPolygon : IConvexShape, IEnumerable<Vector2>
 
 	public static ConvexPolygon Transform(in ConvexPolygon polygon, in Matrix3x2 matrix, bool maintainWinding = false)
 	{
-		ConvexPolygon result = new();
+		ConvexPolygon result = [ ];
 
 		// If we're flipping the Polygon we may need to reverse the points.
 		// This way the Polygon winding (clockwise or counter-clockwise) stays the same.
@@ -161,7 +178,7 @@ public unsafe struct ConvexPolygon : IConvexShape, IEnumerable<Vector2>
 
 	public static ConvexPolygon operator +(in ConvexPolygon a, in Vector2 b)
 	{
-		ConvexPolygon result = a;
+		var result = a;
 		for (int i = 0; i < result.Vertices.Count; i ++)
 			result.Vertices[i] += b;
 		return result;
@@ -169,20 +186,19 @@ public unsafe struct ConvexPolygon : IConvexShape, IEnumerable<Vector2>
 
 	public static ConvexPolygon operator -(in ConvexPolygon a, in Vector2 b)
 	{
-		ConvexPolygon result = a;
+		var result = a;
 		for (int i = 0; i < result.Vertices.Count; i ++)
 			result.Vertices[i] -= b;
 		return result;
 	}
 
-	public readonly override bool Equals(object? obj)
-		=> obj is ConvexPolygon value && value == this;
+	public readonly override bool Equals(object? obj) => obj is ConvexPolygon value && value == this;
 
 	public readonly override int GetHashCode()
 	{
 		var hash = Vertices.Count.GetHashCode();
-		for (int i = 0; i < Vertices.Count; i ++)
-			hash = HashCode.Combine(hash, Vertices[i]);
+		foreach (var t in Vertices)
+			hash = HashCode.Combine(hash, t);
 		return hash;
 	}
 
@@ -194,4 +210,64 @@ public unsafe struct ConvexPolygon : IConvexShape, IEnumerable<Vector2>
 
 	readonly IEnumerator IEnumerable.GetEnumerator()
 		=> new StackList32<Vector2>.Enumerator(Vertices);
+
+	#region Enumerate Lines
+
+	public readonly LineEnumerable Lines => new(this);
+
+	public readonly struct LineEnumerable(ConvexPolygon convexPolygon)
+	{
+		public LineEnumerator GetEnumerator() => new(convexPolygon);
+	}
+
+	public struct LineEnumerator(ConvexPolygon convexPolygon)
+	{
+		private int index = -1;
+
+		public Line Current { get; private set; }
+
+		public bool MoveNext()
+		{
+			index++;
+			if (index < convexPolygon.Points)
+			{
+				Current = new(convexPolygon[index], convexPolygon[(index + 1) % convexPolygon.Points]);
+				return true;
+			}
+			else
+				return false;
+		}
+	}
+
+	#endregion
+
+	#region Enumerate Triangles
+
+	public readonly TriangleEnumerable Triangles => new(this);
+
+	public readonly struct TriangleEnumerable(ConvexPolygon convexPolygon)
+	{
+		public TriangleEnumerator GetEnumerator() => new(convexPolygon);
+	}
+
+	public struct TriangleEnumerator(ConvexPolygon convexPolygon)
+	{
+		private int index = -1;
+
+		public Triangle Current { get; private set; }
+
+		public bool MoveNext()
+		{
+			index++;
+			if (index < convexPolygon.Points - 1)
+			{
+				Current = new(convexPolygon[0], convexPolygon[index], convexPolygon[(index + 1) % convexPolygon.Points]);
+				return true;
+			}
+			else
+				return false;
+		}
+	}
+
+	#endregion
 }
