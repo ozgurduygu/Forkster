@@ -13,6 +13,11 @@ namespace Foster.Framework;
 [StructLayout(LayoutKind.Sequential), JsonConverter(typeof(JsonConverter))]
 public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatable<Rect>
 {
+	/// <summary>
+	/// The <see cref="Rect"/> at (0, 0) with size (1, 1)
+	/// </summary>
+	public static readonly Rect Identity = (0, 0, 1, 1);
+
 	public float X = x;
 	public float Y = y;
 	public float Width = w;
@@ -589,6 +594,20 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 		=> new(origin.X - (justify.X * size.X), origin.Y - (justify.Y * size.Y), size.X, size.Y);
 
 	/// <summary>
+	/// Get a rect justified around the origin point
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static Rect Justified(float width, float height, float justifyX, float justifyY)
+		=> new(justifyX * -width, justifyY * -height, width, height);
+
+	/// <summary>
+	/// Get a rect justified around the origin point
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static Rect Justified(in Vector2 size, in Vector2 justify)
+		=> new(justify.X * -size.X, justify.Y * -size.Y, size.X, size.Y);
+
+	/// <summary>
 	/// Get the rect with positive width and height that stretches from point a to point b
 	/// </summary>
 	public static Rect Between(in Vector2 a, in Vector2 b)
@@ -636,56 +655,6 @@ public struct Rect(float x, float y, float w, float h) : IConvexShape, IEquatabl
 	public static Rect operator *(in Rect a, in Vector2 scaler) => a.Scale(scaler);
 	public static Rect operator /(in Rect a, in Vector2 scaler) => new Rect(a.X / scaler.X, a.Y / scaler.Y, a.Width / scaler.X, a.Height / scaler.Y).ValidateSize();
 
-	// TODO: remove once Facing is deleted
-#pragma warning disable 0618
-	public static Rect operator *(in Rect rect, Facing flipX) => flipX == Facing.Right ? rect : rect.ScaleX(-1);
-#pragma warning restore 0618
-
-	public class JsonConverter : JsonConverter<Rect>
-	{
-		public override Rect Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-		{
-			Rect value = new();
-			if (reader.TokenType != JsonTokenType.StartObject)
-				return value;
-
-			while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
-			{
-				if (reader.TokenType != JsonTokenType.PropertyName)
-					continue;
-
-				var component = reader.ValueSpan;
-				if (!reader.Read() || reader.TokenType != JsonTokenType.Number)
-				{
-					reader.Skip();
-					continue;
-				}
-
-				if (Calc.EqualsOrdinalIgnoreCaseUtf8(component, "x"u8))
-					value.X = reader.GetSingle();
-				else if (Calc.EqualsOrdinalIgnoreCaseUtf8(component, "y"u8))
-					value.Y = reader.GetSingle();
-				else if (Calc.EqualsOrdinalIgnoreCaseUtf8(component, "h"u8) ||
-					Calc.EqualsOrdinalIgnoreCaseUtf8(component, "width"u8))
-					value.Width = reader.GetSingle();
-				else if (Calc.EqualsOrdinalIgnoreCaseUtf8(component, "h"u8) ||
-					Calc.EqualsOrdinalIgnoreCaseUtf8(component, "height"u8))
-					value.Height = reader.GetSingle();
-				else
-					reader.Skip();
-			}
-
-			return value;
-		}
-
-		public override void Write(Utf8JsonWriter writer, Rect value, JsonSerializerOptions options)
-		{
-			writer.WriteStartObject();
-			writer.WriteNumber("X", value.X);
-			writer.WriteNumber("Y", value.Y);
-			writer.WriteNumber("Width", value.Width);
-			writer.WriteNumber("Height", value.Height);
-			writer.WriteEndObject();
-		}
-	}
+	public class JsonConverter()
+		: JsonConverters.FloatVectorJsonConverter<Rect>([["X"], ["Y"], ["Width", "W"], ["Height", "H"]]);
 }

@@ -7,7 +7,7 @@ namespace Foster.Framework;
 /// Queries and rasterizes characters from a Font File.
 /// To draw a font to the screen, use <see cref="SpriteFont"/>.
 /// </summary>
-public class Font : IDisposable
+public class Font : IDisposable, IProvideKerning
 {
 	public struct Character
 	{
@@ -23,9 +23,9 @@ public class Font : IDisposable
 	private IntPtr fontPtr;
 	private IntPtr dataPtr;
 	private GCHandle dataHandle;
-	private int dataLength;
 	private readonly Dictionary<int, int> codepointToGlyphLookup = [];
 	private static readonly Exception invalidFontException = new("Attempting to use an invalid/disposed Font");
+	private readonly Dictionary<float, float> sizeToScale = [];
 
 	public int Ascent { get; private set; }
 	public int Descent { get; private set; }
@@ -62,15 +62,14 @@ public class Font : IDisposable
 		// pin the buffer
 		dataHandle =  GCHandle.Alloc(buffer, GCHandleType.Pinned);
 		dataPtr = dataHandle.AddrOfPinnedObject();
-		dataLength = buffer.Length;
 
 		// create the font ptr
-		fontPtr = Platform.FontInit(dataPtr, dataLength);
+		fontPtr = StbTrueType.Create(dataPtr);
 		if (fontPtr == IntPtr.Zero)
 			throw new Exception("Unable to parse Font Data");
 
 		// get font properties
-		Platform.FontGetMetrics(fontPtr, out int ascent, out int descent, out int linegap);
+		StbTrueType.GetMetrics(fontPtr, out int ascent, out int descent, out int linegap);
 		Ascent = ascent;
 		Descent = descent;
 		LineGap = linegap;
@@ -91,7 +90,7 @@ public class Font : IDisposable
 	public int GetGlyphIndex(int codepoint)
 	{
 		if (!codepointToGlyphLookup.TryGetValue(codepoint, out var glyphIndex))
-			codepointToGlyphLookup[codepoint] = glyphIndex = Platform.FontGetGlyphIndex(fontPtr, codepoint);
+			codepointToGlyphLookup[codepoint] = glyphIndex = StbTrueType.GetGlyphIndex(fontPtr, codepoint);
 
 		return glyphIndex;
 	}
@@ -109,9 +108,14 @@ public class Font : IDisposable
 	/// </summary>
 	public float GetScale(float size)
 	{
-		if (fontPtr == IntPtr.Zero)
-			throw invalidFontException;
-		return Platform.FontGetScale(fontPtr, size);
+		if (!sizeToScale.TryGetValue(size, out var value))
+		{
+			if (fontPtr == IntPtr.Zero)
+				throw invalidFontException;
+			sizeToScale[size] = value = StbTrueType.GetScale(fontPtr, size);
+		}
+
+		return value;
 	}
 
 	/// <summary>
@@ -141,7 +145,7 @@ public class Font : IDisposable
 	{
 		if (fontPtr == IntPtr.Zero)
 			throw invalidFontException;
-		return Platform.FontGetKerning(fontPtr, glyph1, glyph2, scale);
+		return StbTrueType.GetKerning(fontPtr, glyph1, glyph2, scale);
 	}
 
 	/// <summary>
@@ -172,7 +176,7 @@ public class Font : IDisposable
 		if (fontPtr == IntPtr.Zero)
 			throw invalidFontException;
 
-		Platform.FontGetCharacter(fontPtr, glyphIndex, scale,
+		StbTrueType.GetCharacter(fontPtr, glyphIndex, scale,
 			out int width, out int height, out float advance, out float offsetX, out float offsetY, out int visible);
 
 		return new()
@@ -225,7 +229,7 @@ public class Font : IDisposable
 		unsafe
 		{
 			fixed (Color* ptr = destination)
-				Platform.FontGetPixels(fontPtr, new(ptr), character.GlyphIndex, character.Width, character.Height, character.Scale);
+				StbTrueType.GetPixels(fontPtr, new(ptr), character.GlyphIndex, character.Width, character.Height, character.Scale);
 		}
 
 		return true;
@@ -233,20 +237,29 @@ public class Font : IDisposable
 
 	public void Dispose()
 	{
-		Disposed = true;
+		if (!Disposed)
+		{
+			if (dataPtr != IntPtr.Zero)
+			{
+				dataHandle.Free();
+				dataHandle = new();
+				dataPtr = IntPtr.Zero;
+			}
+
+			if (fontPtr != IntPtr.Zero)
+			{
+				StbTrueType.Destroy(fontPtr);
+				fontPtr = IntPtr.Zero;
+			}
+
+			Disposed = true;
+		}
+
 		GC.SuppressFinalize(this);
+	}
 
-		if (dataPtr != IntPtr.Zero)
-		{
-			dataHandle.Free();
-			dataHandle = new();
-			dataPtr = IntPtr.Zero;
-		}
-
-		if (fontPtr != IntPtr.Zero)
-		{
-			Platform.FontFree(fontPtr);
-			fontPtr = IntPtr.Zero;
-		}
+	float IProvideKerning.GetKerning(int codepointA, int codepointB, float size)
+	{
+		return GetKerning(codepointA, codepointB, GetScale(size));
 	}
 }

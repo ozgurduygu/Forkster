@@ -24,17 +24,17 @@ public readonly struct Signs(bool positive) : IEquatable<Signs>
 	public int AsInt => negative ? -1 : 1;
 
 	/// <summary>
-	/// The opposite of our value
+	/// The opposite of this value
 	/// </summary>
 	public Signs Negate => new(negative);
 
 	/// <summary>
-	/// Integers convert to <see cref="Negative"/> if negative, otherwise (including 0) give <see cref="Positive"/>
+	/// Integers convert to <see cref="Negative"/> if negative, otherwise (including 0) give <see cref="Positive"/>. To define behavior when integer is 0, use <see cref="FromInt"/>.
 	/// </summary>
 	public static implicit operator Signs(int v) => v < 0 ? Negative : Positive;
 
 	/// <summary>
-	/// Floats convert to <see cref="Negative"/> if negative, otherwise (including 0) give <see cref="Positive"/>
+	/// Floats convert to <see cref="Negative"/> if negative, otherwise (including 0) give <see cref="Positive"/>. To define behavior when integer is 0, use <see cref="FromFloat"/>.
 	/// </summary>
 	public static explicit operator Signs(float f) => f < 0 ? Negative : Positive;
 
@@ -107,12 +107,6 @@ public readonly struct Signs(bool positive) : IEquatable<Signs>
 	/// </summary>
 	public Cardinal CardinalY => Cardinal.Down * this;
 
-	// TODO: remove once Facing is deleted
-#pragma warning disable 0618
-	public static implicit operator Facing(Signs sign) => new(sign.AsInt);
-	public static implicit operator Signs(Facing facing) => new(facing.Sign >= 0);
-#pragma warning restore 0618
-
 	public static Signs operator-(Signs a) => a.Negate;
 	public static Signs operator+(Signs a) => a;
 	public static bool operator ==(Signs a, Signs b) => a.AsInt == b.AsInt;
@@ -127,42 +121,42 @@ public readonly struct Signs(bool positive) : IEquatable<Signs>
 	public static Vector2 operator*(Signs facing, Vector2 vec) => vec * facing.AsInt;
 
 	/// <summary>
-	/// Check if the facing equals the sign of the number. If the number is zero, false is always returned
+	/// Check if the <see cref="Signs"/> matches the sign of the number. If the number is zero, false is always returned
 	/// </summary>
 	public static bool operator ==(Signs a, int b) => a.AsInt == Math.Sign(b);
 
 	/// <summary>
-	/// Check if the facing does not equal the sign of the number. If the number is zero, true is always returned
+	/// Check if the <see cref="Signs"/> does not match the sign of the number. If the number is zero, true is always returned
 	/// </summary>
 	public static bool operator !=(Signs a, int b) => a.AsInt != Math.Sign(b);
 
 	/// <summary>
-	/// Check if the facing equals the sign of the number. If the number is zero, false is always returned
+	/// Check if the <see cref="Signs"/> matches the sign of the number. If the number is zero, false is always returned
 	/// </summary>
 	public static bool operator ==(int a, Signs b) => b.AsInt == Math.Sign(a);
 
 	/// <summary>
-	/// Check if the facing does not equal the sign of the number. If the number is zero, true is always returned
+	/// Check if the <see cref="Signs"/> does not match the sign of the number. If the number is zero, true is always returned
 	/// </summary>
 	public static bool operator !=(int a, Signs b) => b.AsInt != Math.Sign(a);
 
 	/// <summary>
-	/// Check if the facing equals the sign of the number. If the number is zero, false is always returned
+	/// Check if the <see cref="Signs"/> matches the sign of the number. If the number is zero, false is always returned
 	/// </summary>
 	public static bool operator ==(Signs a, float b) => a.AsInt == Math.Sign(b);
 
 	/// <summary>
-	/// Check if the facing does not equal the sign of the number. If the number is zero, true is always returned
+	/// Check if the <see cref="Signs"/> does not match the sign of the number. If the number is zero, true is always returned
 	/// </summary>
 	public static bool operator !=(Signs a, float b) => a.AsInt != Math.Sign(b);
 
 	/// <summary>
-	/// Check if the facing equals the sign of the number. If the number is zero, false is always returned
+	/// Check if the <see cref="Signs"/> matches the sign of the number. If the number is zero, false is always returned
 	/// </summary>
 	public static bool operator ==(float a, Signs b) => b.AsInt == Math.Sign(a);
 
 	/// <summary>
-	/// Check if the facing does not equal the sign of the number. If the number is zero, true is always returned
+	/// Check if the <see cref="Signs"/> does not match the sign of the number. If the number is zero, true is always returned
 	/// </summary>
 	public static bool operator !=(float a, Signs b) => b.AsInt != Math.Sign(a);
 

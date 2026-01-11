@@ -12,12 +12,12 @@ public class Image : IDisposable
 	/// <summary>
 	/// Width of the Image
 	/// </summary>
-	public int Width { get; private set; }
+	public int Width => data.Width;
 
 	/// <summary>
 	/// Height of the Image
 	/// </summary>
-	public int Height { get; private set; }
+	public int Height => data.Height;
 
 	/// <summary>
 	/// Total number of pixels in the Image
@@ -38,15 +38,7 @@ public class Image : IDisposable
 	/// Gets a Span of the pixel data held by the Image.<br/>
 	/// Note that this span is only valid as long as the Image has not been disposed.
 	/// </summary>
-	public unsafe Span<Color> Data
-	{
-		get
-		{
-			if (Width <= 0 || Height <= 0)
-				return [];
-			return new Span<Color>(ptr.ToPointer(), Width * Height);
-		}
-	}
+	public unsafe Span<Color> Data => data.Pixels;
 
 	/// <summary>
 	/// If the Image was disposed
@@ -56,11 +48,12 @@ public class Image : IDisposable
 	/// <summary>
 	/// Gets a Pointer of the pixel data held by the Image
 	/// </summary>
-	public IntPtr Pointer => ptr;
+	public IntPtr Pointer => data.Data;
 
-	private IntPtr ptr;
-	private GCHandle handle;
-	private bool unmanaged = false;
+	/// <summary>
+    /// internal image data wrapper
+    /// </summary>
+	private readonly ImageData data;
 
 	/// <summary>
 	/// Creates an empty Image with no width or height
@@ -78,94 +71,41 @@ public class Image : IDisposable
 	/// </summary>
 	public Image(int width, int height, Color fill)
 		: this(width, height, new Color[width * height])
-	{
-		unsafe
-		{
-			Color* pixels = (Color*)ptr.ToPointer();
-			for (int i = 0, n = width * height; i < n; i++)
-				pixels[i] = fill;
-		}
-	}
+		=> Data.Fill(fill);
 
 	/// <summary>
 	/// Creates an image of a given size with the given pixel data
 	/// </summary>
 	public Image(int width, int height, Color[] pixels)
-	{
-		Width = width;
-		Height = height;
-		handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
-		ptr = handle.AddrOfPinnedObject();
-		unmanaged = false;
-	}
+    	=> data = ImageData.Rgba(pixels, width, height);
 
 	/// <summary>
 	/// Creates an Image from a file.
 	/// </summary>
 	public Image(string file)
-	{
-		using var stream = File.OpenRead(file);
-		Load(stream);
-	}
+		=> data = ImageData.Decode(File.ReadAllBytes(file));
 
 	/// <summary>
 	/// Creates an Image from a Stream. Expects a valid image format, not a stream of color values.
 	/// </summary>
 	public Image(Stream stream)
-	{
-		Load(stream);
-	}
+		=> data = ImageData.Decode(stream);
 
 	/// <summary>
 	/// Creates an image from a byte array. Expects a valid image format, not an array of color values.
 	/// </summary>
 	public Image(byte[] data)
-	{
-		using var stream = new MemoryStream(data);
-		Load(stream);
-	}
+		=> this.data = ImageData.Decode(data);
 
-	~Image()
-	{
-		Dispose();
-	}
+	~Image() => Dispose(false);
 
-	private unsafe void Load(Stream stream)
+	private void Dispose(bool disposing)
 	{
-		// get all the bytes
-		var data = Calc.ReadAllBytes(stream);
-
-		// load image from byte data
-		nint mem;
-		int w, h;
-		fixed (byte* it = data)
+		if (!IsDisposed)
 		{
-			mem = Platform.ImageLoad(it, data.Length, out w, out h);
+			data.Free();
+			IsDisposed = true;
 		}
-
-		// returns invalid ptr if unable to load
-		if (mem == 0)
-			throw new Exception("Failed to load Image");
-
-		// update properties
-		Clear();
-		Width = w;
-		Height = h;
-		ptr = mem;
-		unmanaged = true;
-	}
-
-	private void Clear()
-	{
-		if (unmanaged)
-			Platform.ImageFree(ptr);
-		else if (handle.IsAllocated)
-			handle.Free();
-
-		handle = new();
-		ptr = new();
-		unmanaged = false;
-		Width = Height = 0;
 	}
 
 	/// <summary>
@@ -173,9 +113,8 @@ public class Image : IDisposable
 	/// </summary>
 	public void Dispose()
 	{
-		Clear();
+		Dispose(true);
 		GC.SuppressFinalize(this);
-		IsDisposed = true;
 	}
 
 	/// <summary>
@@ -184,7 +123,7 @@ public class Image : IDisposable
 	public void WritePng(string path)
 	{
 		using var stream = File.Create(path);
-		WritePng(stream);
+		data.Encode(stream, ImageData.Formats.PNG);
 	}
 
 	/// <summary>
@@ -192,7 +131,17 @@ public class Image : IDisposable
 	/// </summary>
 	public void WritePng(Stream stream)
 	{
-		Write(stream, Platform.ImageWriteFormat.Png);
+		data.Encode(stream, ImageData.Formats.PNG);
+	}
+
+	/// <summary>
+	/// Write the image to PNG
+	/// </summary>
+	public byte[] WritePng()
+	{
+		var mem = new MemoryStream();
+		data.Encode(mem, ImageData.Formats.PNG);
+		return mem.GetBuffer();
 	}
 
 	/// <summary>
@@ -201,7 +150,7 @@ public class Image : IDisposable
 	public void WriteQoi(string path)
 	{
 		using var stream = File.Create(path);
-		WriteQoi(stream);
+		data.Encode(stream, ImageData.Formats.QOI);
 	}
 
 	/// <summary>
@@ -209,22 +158,17 @@ public class Image : IDisposable
 	/// </summary>
 	public void WriteQoi(Stream stream)
 	{
-		Write(stream, Platform.ImageWriteFormat.Qoi);
+		data.Encode(stream, ImageData.Formats.QOI);
 	}
 
-	private unsafe void Write(Stream stream, Platform.ImageWriteFormat format)
+	/// <summary>
+	/// Write the image to QOI
+	/// </summary>
+	public byte[] WriteQoi()
 	{
-		[UnmanagedCallersOnly]
-		static unsafe void Write(IntPtr context, IntPtr data, int size)
-		{
-			var stream = GCHandle.FromIntPtr(context).Target as Stream;
-			var ptr = (byte*)data.ToPointer();
-			stream?.Write(new ReadOnlySpan<byte>(ptr, size));
-		}
-
-		GCHandle handle = GCHandle.Alloc(stream);
-		Platform.ImageWrite(&Write, GCHandle.ToIntPtr(handle), format, Width, Height, ptr);
-		handle.Free();
+		var mem = new MemoryStream();
+		data.Encode(mem, ImageData.Formats.QOI);
+		return mem.GetBuffer();
 	}
 
 	/// <summary>
@@ -259,9 +203,7 @@ public class Image : IDisposable
 	{
 		if (x < 0 || y < 0 || x >= Width || y >= Height)
 			throw new IndexOutOfRangeException();
-
-		Color* pixels = (Color*)ptr;
-		return pixels[x + y * Width];
+		return Data[x + y * Width];
 	}
 
 	/// <summary>
@@ -272,12 +214,7 @@ public class Image : IDisposable
 	{
 		if (i < 0 || i >= Width * Height)
 			throw new IndexOutOfRangeException();
-
-		unsafe
-		{
-			Color* pixels = (Color*)ptr;
-			return pixels[i];
-		}
+		return Data[i];
 	}
 
 	/// <summary>
@@ -288,12 +225,7 @@ public class Image : IDisposable
 	{
 		if (x < 0 || y < 0 || x >= Width || y >= Height)
 			throw new IndexOutOfRangeException();
-
-		unsafe
-		{
-			Color* pixels = (Color*)ptr;
-			pixels[x + y * Width] = color;
-		}
+		Data[x + y * Width] = color;
 	}
 
 	/// <summary>
@@ -304,12 +236,7 @@ public class Image : IDisposable
 	{
 		if (i < 0 || i >= Width * Height)
 			throw new IndexOutOfRangeException();
-
-		unsafe
-		{
-			Color* pixels = (Color*)ptr;
-			pixels[i] = color;
-		}
+		Data[i] = color;
 	}
 
 	/// <summary>
@@ -337,7 +264,7 @@ public class Image : IDisposable
 		fixed (Color* sourcePtr = sourcePixels)
 		{
 			var sourceEnd = sourcePtr + sourceWidth * sourceHeight;
-			var destinationPtr = (Color*)ptr.ToPointer();
+			var destinationPtr = (Color*)Pointer;
 			var destinationEnd = destinationPtr + Width * Height;
 			var len = dst.Width;
 
@@ -382,9 +309,9 @@ public class Image : IDisposable
 	{
 		unsafe
 		{
-			if (ptr != nint.Zero)
+			if (Pointer != nint.Zero)
 			{
-				Color* pixels = (Color*)ptr.ToPointer();
+				Color* pixels = (Color*)Pointer.ToPointer();
 				for (int i = 0, n = PixelCount; i < n; ++i)
 					pixels[i] = pixels[i].Premultiply();
 			}

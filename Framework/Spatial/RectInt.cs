@@ -2,15 +2,22 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Foster.Framework;
 
 /// <summary>
 /// A 2D Integer Rectangle
 /// </summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential), JsonConverter(typeof(JsonConverter))]
 public struct RectInt(int x, int y, int w, int h) : IConvexShape, IEquatable<RectInt>
 {
+	/// <summary>
+	/// The <see cref="RectInt"/> at (0, 0) with size (1, 1)
+	/// </summary>
+	public static readonly RectInt Identity = (0, 0, 1, 1);
+
 	public int X = x;
 	public int Y = y;
 	public int Width = w;
@@ -429,6 +436,9 @@ public struct RectInt(int x, int y, int w, int h) : IConvexShape, IEquatable<Rec
 	public readonly RectInt At(in Point2 pos) => new(pos.X, pos.Y, Width, Height);
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public readonly RectInt At(int x, int y) => new(x, y, Width, Height);
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public readonly RectInt AtX(int x) => new(x, Y, Width, Height);
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -844,11 +854,6 @@ public struct RectInt(int x, int y, int w, int h) : IConvexShape, IEquatable<Rec
 		=> new RectInt(rect.X / scaler.X, rect.Y / scaler.Y, rect.Width / scaler.X, rect.Height / scaler.Y).ValidateSize();
 	public static RectInt operator *(in RectInt rect, Cardinal rotation) => rect.Rotate(rotation);
 
-	// TODO: remove once Facing is deleted
-#pragma warning disable 0618
-	public static RectInt operator *(in RectInt rect, Facing flipX) => flipX == Facing.Right ? rect : rect.ScaleX(-1);
-#pragma warning restore 0618
-
 	public static Rect operator +(in RectInt a, in Vector2 b) => new(a.X + b.X, a.Y + b.Y, a.Width, a.Height);
 	public static Rect operator -(in RectInt a, in Vector2 b) => new(a.X - b.X, a.Y - b.Y, a.Width, a.Height);
 	public static Rect operator +(in Vector2 a, in RectInt b) => new(b.X + a.X, b.Y + a.Y, b.Width, b.Height);
@@ -858,4 +863,6 @@ public struct RectInt(int x, int y, int w, int h) : IConvexShape, IEquatable<Rec
 	public static Rect operator *(in RectInt rect, in Vector2 scaler) => rect.Scale(scaler);
 	public static Rect operator /(in RectInt rect, in Vector2 scaler) => new Rect(rect.X / scaler.X, rect.Y / scaler.Y, rect.Width / scaler.X, rect.Height / scaler.Y).ValidateSize();
 
+	public class JsonConverter()
+		: JsonConverters.IntVectorJsonConverter<RectInt>([["X"], ["Y"], ["Width", "W"], ["Height", "H"]]);
 }

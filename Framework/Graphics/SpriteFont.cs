@@ -1,20 +1,17 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Numerics;
 
 namespace Foster.Framework;
 
 /// <summary>
-/// A Font used to render text to a Sprite <see cref="Batcher"/>.<br/>
-/// <br/>
-/// By default the <see cref="SpriteFont"/> will prepare characters as they are
-/// requested, which means there can occasionally be a delay between trying
-/// to draw some text and it actually appearing on-screen. To remove this delay,
-/// you can call <see cref="PrepareCharacters(ReadOnlySpan{char}, bool)"/> to
-/// pre-render all characters that you would like to use.
+/// A Font used to render text to a Sprite <see cref="Batcher"/>.
 /// </summary>
 public class SpriteFont : IDisposable
 {
+	private readonly record struct KerningPair(
+		int First,
+		int Second
+	);
+
 	public readonly record struct Character(
 		int Codepoint,
 		Subtexture Subtexture,
@@ -22,8 +19,6 @@ public class SpriteFont : IDisposable
 		Vector2 Offset,
 		bool Exists
 	);
-
-	private readonly record struct KerningPair(int First, int Second);
 
 	/// <summary>
 	/// Set of ASCII character unicode values
@@ -34,13 +29,6 @@ public class SpriteFont : IDisposable
 	/// The GraphicsDevice the Sprite Font belongs to
 	/// </summary>
 	public readonly GraphicsDevice GraphicsDevice;
-
-	/// <summary>
-	/// The Font being used by the SpriteFont.
-	/// This can be null if the SpriteFont was created without a Font, in which
-	/// case only custom Characters will be used.
-	/// </summary>
-	public readonly Font? Font;
 
 	/// <summary>
 	/// Name of the Sprite Font. Not used internally.
@@ -78,21 +66,6 @@ public class SpriteFont : IDisposable
 	public float LineHeight => Ascent - Descent + LineGap;
 
 	/// <summary>
-	/// If the generated character images should premultiply their alpha.
-	/// This should be true if you render the SpriteFont with the default
-	/// Premultiply BlendMode.
-	/// Note that this property does not modify already-created characters.
-	/// </summary>
-	public bool PremultiplyAlpha = true;
-
-	/// <summary>
-	/// If True, the SpriteFont will always wait for all characters to be ready before
-	/// drawing anything to the screen. This will potentially cause your game to halt
-	/// as characters prepare themselves.
-	/// </summary>
-	public bool WaitForPendingCharacters = false;
-
-	/// <summary>
 	/// Newline characters to use during various text measuring and rendering methods.
 	/// </summary>
 	public readonly List<char> NewlineCharacters = [ '\n' ];
@@ -102,63 +75,104 @@ public class SpriteFont : IDisposable
 	/// </summary>
 	public readonly List<char> WordbreakCharacters = [ '\n', ' ' ];
 
-	private readonly float fontScale = 1.0f;
+	/// <summary>
+	/// Optional Kerning Provider
+	/// </summary>
+	public IProvideKerning? KerningProvider;
+
+	/// <summary>
+	/// Material used when drawing
+	/// </summary>
+	public Material? Material;
+
+	/// <summary>
+	/// Default Sampler used when drawing
+	/// </summary>
+	public TextureSampler? Sampler;
+
 	private readonly Dictionary<int, Character> characters = [];
 	private readonly Dictionary<KerningPair, float> kerning = [];
-	private readonly List<Page> pages = [];
-	private readonly BlockingCollection<(int Codepoint, Font.Character Metrics)> blittingQueue = [];
-	private readonly BlockingCollection<(int Codepoint, int Page, Rect Source, Rect Frame)> blittingResults = [];
-	private Task? blittingTask;
-	private Color[] blitBuffer = [];
+	private readonly List<Texture> generatedTextures = [];
 
-	public SpriteFont(GraphicsDevice graphicsDevice, Font font, float size, ReadOnlySpan<int> prebakedCodepoints = default, bool premultiplyAlpha = true)
+	public SpriteFont(GraphicsDevice graphicsDevice, Font font, float size, ReadOnlySpan<int> codepoints, bool premultiplyAlpha = true)
 	{
 		GraphicsDevice = graphicsDevice;
-		Font = font;
+		KerningProvider = font;
 		Size = size;
-		fontScale = font.GetScale(size);
+
+		var fontScale = font.GetScale(size);
 		Ascent = font.Ascent * fontScale;
 		Descent = font.Descent * fontScale;
 		LineGap = font.LineGap * fontScale;
-		PremultiplyAlpha = premultiplyAlpha;
 
-		if (prebakedCodepoints.Length > 0)
-			PrepareCharacters(prebakedCodepoints, true);
+		if (codepoints.Length > 0)
+			AddCharacters(font, codepoints, size, premultiplyAlpha);
 	}
 
-	public SpriteFont(GraphicsDevice graphicsDevice, string path, float size, ReadOnlySpan<int> prebakedCodepoints = default, bool premultiplyAlpha = true)
-		: this(graphicsDevice, new Font(path), size, prebakedCodepoints, premultiplyAlpha)
-	{
+	public SpriteFont(GraphicsDevice graphicsDevice, Font font, float size, bool premultiplyAlpha = true)
+		: this(graphicsDevice, font, size, Ascii, premultiplyAlpha) {}
 
-	}
+	public SpriteFont(GraphicsDevice graphicsDevice, string path, float size, ReadOnlySpan<int> codepoints, bool premultiplyAlpha = true)
+		: this(graphicsDevice, new Font(path), size, codepoints, premultiplyAlpha) { }
 
-	public SpriteFont(GraphicsDevice graphicsDevice, Stream stream, float size, ReadOnlySpan<int> prebakedCodepoints = default, bool premultiplyAlpha = true)
-		: this(graphicsDevice, new Font(stream), size, prebakedCodepoints, premultiplyAlpha)
-	{
+	public SpriteFont(GraphicsDevice graphicsDevice, string path, float size, bool premultiplyAlpha = true)
+		: this(graphicsDevice, new Font(path), size, Ascii, premultiplyAlpha) { }
 
-	}
+	public SpriteFont(GraphicsDevice graphicsDevice, Stream stream, float size, ReadOnlySpan<int> codepoints, bool premultiplyAlpha = true)
+		: this(graphicsDevice, new Font(stream), size, codepoints, premultiplyAlpha) { }
+
+	public SpriteFont(GraphicsDevice graphicsDevice, Stream stream, float size, bool premultiplyAlpha = true)
+		: this(graphicsDevice, new Font(stream), size, Ascii, premultiplyAlpha) { }
 
 	public SpriteFont(GraphicsDevice graphicsDevice, float size = 16)
 	{
 		GraphicsDevice = graphicsDevice;
-		Font = null;
 		Size = size;
 	}
 
-	~SpriteFont()
+	public SpriteFont(GraphicsDevice graphicsDevice, MsdfFont msdf)
 	{
-		Dispose();
+		GraphicsDevice = graphicsDevice;
+		Size = msdf.Size;
+		Ascent = msdf.Ascent;
+		Descent = msdf.Descent;
+		LineGap = msdf.LineGap;
+		Material = graphicsDevice.Defaults.MsdfMaterial.Clone();
+		Material.Fragment.SetUniformBuffer([msdf.DistanceRange], 0);
+		Sampler = new (TextureFilter.Linear, TextureWrap.Clamp);
+		KerningProvider = msdf;
+
+		generatedTextures.Add(new Texture(graphicsDevice, msdf.Image));
+
+		foreach (var ch in msdf.Characters)
+		{
+			AddCharacter(new Character(
+				ch.Codepoint,
+				new Subtexture(generatedTextures[0], ch.SourceRect),
+				ch.Advance,
+				ch.Offset,
+				true
+			));
+		}
 	}
+
+	~SpriteFont() => Dispose(false);
 
 	public void Dispose()
 	{
+		Dispose(true);
 		GC.SuppressFinalize(this);
+	}
 
-		if (blittingTask != null)
+	private void Dispose(bool disposing)
+	{
+		if (disposing)
 		{
-			blittingQueue.CompleteAdding();
-			blittingTask?.Wait();
-			blittingTask = null;
+			foreach (var it in generatedTextures)
+				it.Dispose();
+			generatedTextures.Clear();
+			characters.Clear();
+			kerning.Clear();
 		}
 	}
 
@@ -169,7 +183,7 @@ public class SpriteFont : IDisposable
 	/// Calculates the width of the given text. If the text has multiple lines,
 	/// then the width of the widest line will be returned.
 	/// </summary>
-	public float WidthOf(ReadOnlySpan<char> text)
+	public float WidthOf(ReadOnlySpan<char> text, float size)
 	{
 		float width = 0;
 		float lineWidth = 0;
@@ -184,7 +198,7 @@ public class SpriteFont : IDisposable
 				continue;
 			}
 
-			if (TryGetCharacter(text, i, out var ch, out var step))
+			if (TryGetCharacter(text[i..], out var ch, out var step))
 			{
 				lineWidth += ch.Advance;
 				if (lastCodepoint != 0)
@@ -196,13 +210,17 @@ public class SpriteFont : IDisposable
 			}
 		}
 
-		return width;
+		return width * (size / Size);
 	}
+
+	/// <inheritdoc cref="WidthOf(ReadOnlySpan{char}, float)"/>
+	public float WidthOf(ReadOnlySpan<char> text)
+		=> WidthOf(text, Size);
 
 	/// <summary>
 	/// Calculates the width of the given text, up to the first line-break.
 	/// </summary>
-	public float WidthOfLine(ReadOnlySpan<char> text)
+	public float WidthOfLine(ReadOnlySpan<char> text, float size)
 	{
 		float lineWidth = 0;
 		int lastCodepoint = 0;
@@ -212,7 +230,7 @@ public class SpriteFont : IDisposable
 			if (NewlineCharacters.Contains(text[i]))
 				break;
 
-			if (TryGetCharacter(text, i, out var ch, out var step))
+			if (TryGetCharacter(text[i..], out var ch, out var step))
 			{
 				lineWidth += ch.Advance;
 				if (lastCodepoint != 0)
@@ -222,13 +240,17 @@ public class SpriteFont : IDisposable
 			}
 		}
 
-		return lineWidth;
+		return lineWidth * (size / Size);
 	}
+
+	/// <inheritdoc cref="WidthOfLine(ReadOnlySpan{char}, float)"/>
+	public float WidthOfLine(ReadOnlySpan<char> text)
+		=> WidthOfLine(text, Size);
 
 	/// <summary>
 	/// Calculates the width of the next word in the given text
 	/// </summary>
-	public float WidthOfWord(ReadOnlySpan<char> text, out int length)
+	public float WidthOfWord(ReadOnlySpan<char> text, float size, out int length)
 	{
 		float lineWidth = 0;
 		int lastCodepoint = 0;
@@ -236,7 +258,7 @@ public class SpriteFont : IDisposable
 		length = 0;
 		while (length < text.Length)
 		{
-			if (TryGetCharacter(text, length, out var ch, out var step))
+			if (TryGetCharacter(text[length..], out var ch, out var step))
 			{
 				lineWidth += ch.Advance;
 				if (lastCodepoint != 0)
@@ -253,13 +275,17 @@ public class SpriteFont : IDisposable
 				break;
 		}
 
-		return lineWidth;
+		return lineWidth * (size / Size);
 	}
+
+	/// <inheritdoc cref="WidthOfWord(ReadOnlySpan{char}, float, out int)"/>
+	public float WidthOfWord(ReadOnlySpan<char> text, out int length)
+		=> WidthOfWord(text, Size, out length);
 
 	/// <summary>
 	/// Calculate the height of the given text
 	/// </summary>
-	public float HeightOf(ReadOnlySpan<char> text)
+	public float HeightOf(ReadOnlySpan<char> text, float size)
 	{
 		if (text.Length <= 0)
 			return 0;
@@ -272,34 +298,46 @@ public class SpriteFont : IDisposable
 				height += LineHeight;
 		}
 
-		return height - LineGap;
+		return (height - LineGap) * (size / Size);
 	}
+
+	/// <inheritdoc cref="HeightOf(ReadOnlySpan{char}, float)"/>
+	public float HeightOf(ReadOnlySpan<char> text)
+		=> HeightOf(text, Size);
 
 	/// <summary>
 	/// Calculate the size of the given text
 	/// </summary>
-	public Vector2 SizeOf(ReadOnlySpan<char> text)
+	public Vector2 SizeOf(ReadOnlySpan<char> text, float size)
 	{
 		return new Vector2(
-			WidthOf(text),
-			HeightOf(text)
+			WidthOf(text, size),
+			HeightOf(text, size)
 		);
 	}
+
+	/// <inheritdoc cref="SizeOf(ReadOnlySpan{char}, float)"/>
+	public Vector2 SizeOf(ReadOnlySpan<char> text)
+		=> SizeOf(text, Size);
 
 	/// <summary>
 	/// Calculates word-wrapping positions to fit the given text into the maximum line width
 	/// </summary>
-	public List<(int Start, int Length)> WrapText(ReadOnlySpan<char> text, float maxLineWidth)
+	public List<(int Start, int Length)> WrapText(ReadOnlySpan<char> text, float maxLineWidth, float size)
 	{
 		var lines = new List<(int Start, int Length)>();
-		WrapText(text, maxLineWidth, lines);
+		WrapText(text, maxLineWidth, lines, size);
 		return lines;
 	}
+
+	/// <inheritdoc cref="WrapText(ReadOnlySpan{char}, float, float)"/>
+	public List<(int Start, int Length)> WrapText(ReadOnlySpan<char> text, float maxLineWidth)
+		=> WrapText(text, maxLineWidth, Size);
 
 	/// <summary>
 	/// Calculates and populates a list with word-wrapping positions to fit the given text into the maximum line width
 	/// </summary>
-	public void WrapText(ReadOnlySpan<char> text, float maxLineWidth, List<(int Start, int Length)> writeLinesTo)
+	public void WrapText(ReadOnlySpan<char> text, float maxLineWidth, List<(int Start, int Length)> writeLinesTo, float size)
 	{
 		var lineWidth = 0.0f;
 		var start = 0;
@@ -314,7 +352,7 @@ public class SpriteFont : IDisposable
 				continue;
 			}
 
-			var nextWordWidth = WidthOfWord(text[i..], out var nextWordLength);
+			var nextWordWidth = WidthOfWord(text[i..], size, out var nextWordLength);
 
 			// split before the next word if the one being added is too long
 			if (lineWidth > 0 && lineWidth + nextWordWidth > maxLineWidth)
@@ -338,98 +376,135 @@ public class SpriteFont : IDisposable
 		}
 	}
 
-	/// <summary>
-	/// Prepares the given characters for rendering
-	/// </summary>
-	/// <param name="codepoints">A list of characters to prepare</param>
-	/// <param name="waitForResults">If the function should wait for all characters to be ready</param>
-	public void PrepareCharacters(ReadOnlySpan<int> codepoints, bool waitForResults)
-	{
-		foreach (var codepoint in codepoints)
-			BlitEnqueue(codepoint, waitForResults, out _);
-
-		if (waitForResults)
-			FlushPendingCharacters(true);
-	}
+	/// <inheritdoc cref="WrapText(ReadOnlySpan{char}, float, List{ValueTuple{int, int}}, float)"/>
+	public void WrapText(ReadOnlySpan<char> text, float maxLineWidth, List<(int Start, int Length)> writeLinesTo)
+		=> WrapText(text, maxLineWidth, writeLinesTo, Size);
 
 	/// <summary>
-	/// Prepares the given characters for rendering
+	/// Adds characters from a font to the SpriteFont.
+	/// Note that this will render new characters and can be quite slow.
 	/// </summary>
-	/// <param name="text">A list of characters to prepare</param>
-	/// <param name="waitForResults">If the function should wait for all characters to be ready</param>
-	public void PrepareCharacters(ReadOnlySpan<char> text, bool waitForResults)
+	public void AddCharacters(Font font, ReadOnlySpan<int> codepoints, float? size = null, bool premultiplyAlpha = true)
 	{
-		int index = 0;
-		while (index < text.Length)
+		var scale = font.GetScale(size ?? Size);
+		var buffers = new ThreadLocal<Color[]>();
+		var tasks = new List<Task>();
+		var packer = new Packer()
 		{
-			int codepoint;
-			if (index + 1 < text.Length && char.IsSurrogatePair(text[index], text[index + 1]))
-			{
-				codepoint = char.ConvertToUtf32(text[index], text[index + 1]);
-				index += 2;
-			}
-			else
-			{
-				codepoint = text[index];
-				index += 1;
-			}
+			MaxSize = 8192,
+			Padding = 1,
+			Trim = true
+		};
 
-			BlitEnqueue(codepoint, waitForResults, out _);
+		// add all codepoints
+		foreach (var codepoint in codepoints)
+		{
+			var ch = font.GetCharacter(codepoint, scale);
+			AddCharacter(new Character(
+				codepoint,
+				default,
+				ch.Advance,
+				ch.Offset,
+				true
+			));
+
+			if (!ch.Visible)
+				continue;
+
+			// blit and add to packer
+			tasks.Add(Task.Run(() =>
+			{
+				// make sure our image buffer is big enough
+				var buffer = buffers.Value;
+				if (buffer == null || buffer.Length < ch.Width * ch.Height)
+				{
+					buffer = new Color[ch.Width * ch.Height * 2];
+					buffers.Value = buffer;
+				}
+				
+				// blit char
+				font.GetPixels(ch, buffer);
+
+				// append to packer
+				lock(packer)
+					packer.Add(codepoint, string.Empty, new RectInt(0, 0, ch.Width, ch.Height), ch.Width, buffer);
+			}));
 		}
 
-		if (waitForResults)
-			FlushPendingCharacters(true);
+		// wait on all blitting
+		Task.WaitAll([..tasks]);
+		buffers.Dispose();
+
+		// get packed textures
+		var result = packer.Pack();
+		var textureIndex = generatedTextures.Count;
+		foreach (var page in result.Pages)
+		{
+			if (premultiplyAlpha)
+				page.Premultiply();
+			generatedTextures.Add(new(GraphicsDevice, page));
+		}
+
+		// update character subtextures
+		foreach (var it in result.Entries)
+			characters[it.Index] = characters[it.Index] with { 
+				Subtexture = new (generatedTextures[textureIndex + it.Page], it.Source, it.Frame)
+			};
 	}
 
 	/// <summary>
-	/// Adds a custom Character to the Sprite Font
+	/// Adds a Character to the Sprite Font
 	/// </summary>
 	public void AddCharacter(int codepoint, in float advance, in Vector2 offset, in Subtexture subtexture)
-	{
-		characters[codepoint] = new(codepoint, subtexture, advance, offset, true);
-	}
+		=> characters[codepoint] = new(codepoint, subtexture, advance, offset, true);
 
 	/// <summary>
-	/// Adds a custom Character to the Sprite Font
+	/// Adds a Character to the Sprite Font
 	/// </summary>
 	public void AddCharacter(in Character character)
-	{
-		characters[character.Codepoint] = character;
-	}
+		=> characters[character.Codepoint] = character;
 
 	/// <summary>
-	/// Gets an existing Character from the SpriteFont.
-	/// Note that unless you have called <see cref="PrepareCharacters(ReadOnlySpan{char}, bool)"/> and
-	/// wait for them to be rendered, they may not have textures yet.
+	/// Gets an existing Character from the SpriteFont
 	/// </summary>
 	public Character GetCharacter(int codepoint)
-	{
-		if (!characters.TryGetValue(codepoint, out var value))
-			BlitEnqueue(codepoint, false, out value);
-		return value;
-	}
+		=> characters.GetValueOrDefault(codepoint, default);
 
+	/// <summary>
+	/// Gets an existing Character from the SpriteFont
+	/// </summary>
 	public bool TryGetCharacter(int codepoint, out Character character)
 	{
 		character = GetCharacter(codepoint);
 		return character.Exists;
 	}
 
+	/// <summary>
+	/// Gets an existing Character from the SpriteFont
+	/// </summary>
 	public bool TryGetCharacter(char ch, out Character character)
 		=> TryGetCharacter((int)ch, out character);
 
-	public bool TryGetCharacter(ReadOnlySpan<char> text, int index, out Character character, out int length)
+	/// <summary>
+	/// Gets an the first Character from a string, and returns how many chars were consumed
+	/// </summary>
+	public bool TryGetCharacter(ReadOnlySpan<char> text, out Character character, out int length)
 	{
-		if (index + 1 < text.Length && char.IsSurrogatePair(text[index], text[index + 1]))
+		if (text.Length <= 0)
+		{
+			character = default;
+			length = 0;
+			return false;
+		}
+
+		if (text.Length > 1 && char.IsSurrogatePair(text[0], text[1]))
 		{
 			length = 2;
-			return TryGetCharacter(char.ConvertToUtf32(text[index], text[index + 1]), out character);
+			return TryGetCharacter(char.ConvertToUtf32(text[0], text[1]), out character);
 		}
-		else
-		{
-			length = 1;
-			return TryGetCharacter(text[index], out character);
-		}
+
+		length = 1;
+		return TryGetCharacter(text[0], out character);
 	}
 
 	public void SetKerning(int codepointFirst, int codepointSecond, float advance)
@@ -437,54 +512,56 @@ public class SpriteFont : IDisposable
 		kerning[new(codepointFirst, codepointSecond)] = advance;
 	}
 
-	public float GetKerning(int codepointFirst, int codepointSecond)
+	public float GetKerning(int codepointFirst, int codepointSecond, float size)
 	{
 		var key = new KerningPair(codepointFirst, codepointSecond);
 
 		if (!kerning.TryGetValue(key, out var value))
 		{
-			if (Font != null)
-				kerning[key] = value = Font.GetKerning(codepointFirst, codepointSecond, fontScale);
+			if (KerningProvider != null)
+				kerning[key] = value = KerningProvider.GetKerning(codepointFirst, codepointSecond, Size);
 			else
 				value = 0;
 		}
 
-		return value;
+		return value * (size / Size);
 	}
 
-	public void RenderText(Batcher batch, ReadOnlySpan<char> text, Vector2 position, Color color)
-	{
-		RenderText(batch, text, position, Vector2.Zero, color);
-	}
+	public float GetKerning(int codepointFirst, int codepointSecond)
+		=> GetKerning(codepointFirst, codepointSecond, Size);
 
-	public void RenderText(Batcher batch, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, Color color)
+	public void Draw(Batcher batch, ReadOnlySpan<char> text, Vector2 position, Color color)
+		=> Draw(batch, text, position, Vector2.Zero, Size, color);
+
+	public void Draw(Batcher batch, ReadOnlySpan<char> text, Vector2 position, float size, Color color)
+		=> Draw(batch, text, position, Vector2.Zero, size, color);
+
+	public void Draw(Batcher batch, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, Color color)
+		=> Draw(batch, text, position, justify, Size, color);
+
+	public void Draw(Batcher batch, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, float size, Color color)
 	{
-		var at = position + new Vector2(0, Ascent);
+		batch.PushMatrix(position, Vector2.One * (size / Size), 0f);
+
 		var last = 0;
 
+		var at = new Vector2(0, Ascent);
 		if (justify.X != 0)
 			at.X -= justify.X * WidthOfLine(text);
-
 		if (justify.Y != 0)
 			at.Y -= justify.Y * HeightOf(text);
 
-		// TODO:
-		// this is incorrect, this should only happen if the font is a pixel font.
-		// (otherwise using matrices and so on will not play nicely with this)
-		at.X = Calc.Round(at.X);
-		at.Y = Calc.Round(at.Y);
+		if (Material != null)
+			batch.PushMaterial(Material);
 
-		// apply changes that we have so far that may have been generated off-thread
-		if (WaitForPendingCharacters)
-			PrepareCharacters(text, true);
-		else
-			BlitApplyChanges();
+		if (Sampler != null)
+			batch.PushSampler(Sampler.Value);
 
 		for (int i = 0; i < text.Length; i++)
 		{
 			if (text[i] == '\n')
 			{
-				at.X = position.X;
+				at.X = 0;
 				if (justify.X != 0 && i < text.Length - 1)
 					at.X -= justify.X * WidthOfLine(text[(i + 1)..]);
 				at.Y += LineHeight;
@@ -492,7 +569,7 @@ public class SpriteFont : IDisposable
 				continue;
 			}
 
-			if (TryGetCharacter(text, i, out var ch, out var step))
+			if (TryGetCharacter(text[i..], out var ch, out var step))
 			{
 				if (last != 0)
 					at.X += GetKerning(last, ch.Codepoint);
@@ -505,299 +582,77 @@ public class SpriteFont : IDisposable
 				i += step - 1;
 			}
 		}
+
+		if (Sampler != null)
+			batch.PopSampler();
+
+		if (Material != null)
+			batch.PopMaterial();
+
+		batch.PopMatrix();
 	}
 
-	public void RenderText(Batcher batch, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, Vector2 justify, Color color)
+	public void DrawWrapped(Batcher batch, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, float maxLineWidth, Color color)
+		=> DrawWrapped(batch, text, position, justify, maxLineWidth, Size, color);
+
+	public void DrawWrapped(Batcher batch, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, float maxLineWidth, float size, Color color)
 	{
 		var lines = Pool.Get<List<(int Start, int Length)>>();
-		lines.Clear();
+		WrapText(text, maxLineWidth, lines, size);
 
-		WrapText(text, maxLineWidth, lines);
+		batch.PushMatrix(position, Vector2.One * (size / Size), 0f);
 
+		var at = Vector2.Zero;
 		if (justify.Y != 0)
-			position.Y -= justify.Y * (Height * lines.Count + LineGap * (lines.Count - 1));
+			at.Y -= justify.Y * (Height * lines.Count + LineGap * (lines.Count - 1));
 
 		foreach (var (Start, Length) in lines)
 		{
-			RenderText(batch, text[Start..(Start + Length)], position, new Vector2(justify.X, 0), color);
-			position.Y += LineHeight;
+			Draw(batch, text[Start..(Start + Length)], at, new Vector2(justify.X, 0), color);
+			at.Y += LineHeight;
 		}
+
+		batch.PopMatrix();
 
 		Pool.Return(lines);
-	}
-
-	public void FlushPendingCharacters(bool waitForResults)
-	{
-		if (waitForResults)
-			BlitQueued(ref blitBuffer);
-		BlitApplyChanges();
-	}
-
-	/// <summary>
-	/// Enqueus a character to be blitted.
-	/// </summary>
-	private bool BlitEnqueue(int codepoint, bool isWaitingForResults, out Character ch)
-	{
-		if (characters.TryGetValue(codepoint, out ch))
-			return false;
-
-		var blitting = false;
-
-		if (Font != null)
-		{
-			var scale = Font.GetScale(Size);
-			var glyph = Font.GetGlyphIndex(codepoint);
-			var metrics = Font.GetCharacterOfGlyph(glyph, scale);
-
-			characters[codepoint] = ch = new(
-				codepoint,
-				new Subtexture(null, default, new(0, 0, metrics.Width, metrics.Height)),
-				metrics.Advance,
-				metrics.Offset,
-				glyph != 0
-			);
-
-			if (metrics.Visible)
-			{
-				blittingQueue.Add((codepoint, metrics));
-				blitting = true;
-			}
-		}
-		else
-		{
-			characters[codepoint] = ch = new(
-				codepoint,
-				default,
-				0.0f,
-				Vector2.Zero,
-				false
-			);
-		}
-
-		// make sure we have a blitting task if we want to do it offthread
-		if (!isWaitingForResults && blitting && blittingTask == null)
-		{
-			void BlittingTask()
-			{
-				var blitBuffer = new Color[64];
-				while (!blittingQueue.IsAddingCompleted)
-				{
-					int codepoint = 0;
-					Font.Character metrics = default;
-
-					// in case it's emptied between the while loop and reaching this point
-					try { (codepoint, metrics) = blittingQueue.Take(); }
-					catch {}
-
-					if (codepoint != 0)
-						BlitCharacter(ref blitBuffer, codepoint, metrics);
-				}
-			}
-
-			blittingTask = Task.Run(BlittingTask);
-		}
-
-		return blitting;
-	}
-
-	/// <summary>
-	/// Blits the characters queued in <see cref="blittingQueue"/> and waits for them to finish, populating <see cref="blittingResults"/>
-	/// </summary>
-	private void BlitQueued(ref Color[] blitBuffer)
-	{
-		while (blittingQueue.TryTake(out var entry))
-			BlitCharacter(ref blitBuffer, entry.Codepoint, entry.Metrics);
-	}
-
-	/// <summary>
-	/// Blits a single character and waits for it to finish, populating <see cref="blittingResults"/>
-	/// </summary>
-	private void BlitCharacter(ref Color[] blitBuffer, int codepoint, in Font.Character ch)
-	{
-		var length = ch.Width * ch.Height;
-		if (blitBuffer.Length <= length)
-			Array.Resize(ref blitBuffer, length);
-
-		// render the actual character to a buffer
-		if (Font == null || !Font.GetPixels(ch, blitBuffer))
-			return;
-
-		// premultiply if needed
-		if (PremultiplyAlpha)
-		{
-			for (int i = 0; i < length; i ++)
-				blitBuffer[i] = blitBuffer[i].Premultiply();
-		}
-
-		// TODO:
-		// Ideally the pages could expand if needed.
-		// When expanding, all character subtextures would need to be updated.
-		var pageSize = (int)Math.Min(4096, Size * 16);
-
-		// unusual case where somehow the character is gigantic and can't fit into a
-		// texture page .... in this scenario, throw a warning and don't render it
-		if (ch.Width > pageSize || ch.Height > pageSize)
-		{
-			Log.Warning($"SpriteFont Character was too large to render to a Texture!");
-			return;
-		}
-
-		// pack into a page
-		lock (pages)
-		{
-			var page = 0;
-			while (true)
-			{
-				if (page >= pages.Count)
-					pages.Add(new(GraphicsDevice, Name, pageSize));
-				if (pages[page].TryPack(blitBuffer, ch.Width, ch.Height, out var source, out var frame))
-				{
-					blittingResults.Add((codepoint, page, source, frame));
-					break;
-				}
-				page++;
-			}
-		}
-	}
-
-	/// <summary>
-	/// Copies results from <see cref="blittingResults"/> and applies them to the characters.
-	/// This also makes sure Texture Pages are updated.
-	/// </summary>
-	private void BlitApplyChanges()
-	{
-		// update character subtextures
-		while (blittingResults.TryTake(out var result))
-		{
-			var page = pages[result.Page];
-			characters[result.Codepoint] = characters[result.Codepoint] with
-			{
-				Subtexture = page.GetSubtexture(result.Source, result.Frame)
-			};
-		}
-	}
-
-	private class Page(GraphicsDevice graphicsDevice, string fontName, int size)
-	{
-		private record struct Node(int Left, int Right, RectInt Bounds);
-		private readonly string fontName = fontName;
-		private readonly int size = size;
-		private readonly Image image = new(size, size);
-		private readonly List<Node> nodes = [ new() { Bounds = new(0, 0, size, size) } ];
-		private Texture? atlas;
-		private bool atlasDirty;
-
-		public Subtexture GetSubtexture(in Rect source, in Rect frame)
-		{
-			// make sure we have the latest data before returning a subtexture
-			if (atlasDirty)
-			{
-				atlasDirty = false;
-				atlas ??= new(graphicsDevice, size, size, TextureFormat.Color, $"SpriteFont[{fontName}]");
-				atlas.SetData<Color>(image.Data);
-			}
-
-			// get the results
-			return new(atlas, source, frame);
-		}
-
-		public bool TryPack(Color[] buffer, int width, int height, out Rect source, out Rect frame)
-		{
-			int index = TryPackNode(0, width + 2, height + 2);
-
-			if (index >= 0)
-			{
-				var node = nodes[index];
-				image.CopyPixels(buffer, width, height, new Point2(node.Bounds.X + 1, node.Bounds.Y + 1));
-				source = node.Bounds;
-				frame = new Rect(1, 1, width, height);
-				atlasDirty = true;
-				return true;
-			}
-
-			source = frame = default;
-			return false;
-		}
-
-		private int TryPackNode(int node, int width, int height)
-		{
-			var it = nodes[node];
-
-			if (it.Left > 0 || it.Right > 0)
-			{
-				if (it.Left > 0)
-				{
-					var fit = TryPackNode(it.Left, width, height);
-					if (fit > 0)
-						return fit;
-				}
-
-				if (it.Right > 0)
-				{
-					var fit = TryPackNode(it.Right, width, height);
-					if (fit > 0)
-						return fit;
-				}
-
-				return -1;
-			}
-
-			if (width > it.Bounds.Width || height > it.Bounds.Height)
-				return -1;
-
-			var w = it.Bounds.Width - width;
-			var h = it.Bounds.Height - height;
-
-			it.Left = nodes.Count;
-			nodes.Add(new());
-			it.Right = nodes.Count;
-			nodes.Add(new());
-
-			if (w <= h)
-			{
-				nodes[it.Left] = new() { Bounds = new(it.Bounds.X + width, it.Bounds.Y, w, height) };
-				nodes[it.Right] = new() { Bounds = new(it.Bounds.X, it.Bounds.Y + height, it.Bounds.Width, h) };
-			}
-			else
-			{
-				nodes[it.Left] = new() { Bounds = new(it.Bounds.X, it.Bounds.Y + height, width, h) };
-				nodes[it.Right] = new() { Bounds = new(it.Bounds.X + width, it.Bounds.Y, w, it.Bounds.Height) };
-			}
-
-			it.Bounds = it.Bounds with { Width = width, Height = height };
-			nodes[node] = it;
-			return node;
-		}
 	}
 }
 
 public static class SpriteFontBatcherExt
 {
 	public static void Text(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, Vector2 position, Color color)
-	{
-		font.RenderText(batch, text, position, Vector2.Zero, color);
-	}
+		=> font.Draw(batch, text, position, Vector2.Zero, color);
 
 	public static void Text(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, Color color)
-	{
-		font.RenderText(batch, text, position, justify, color);
-	}
+		=> font.Draw(batch, text, position, justify, color);
 
-	public static void Text(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, Color color)
-	{
-		font.RenderText(batch, text, maxLineWidth, position, Vector2.Zero, color);
-	}
+	public static void Text(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, Vector2 position, float size, Color color)
+		=> font.Draw(batch, text, position, Vector2.Zero, size, color);
 
-	public static void Text(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, Vector2 justify, Color color)
-	{
-		font.RenderText(batch, text, maxLineWidth, position, justify, color);
-	}
+	public static void Text(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, float size, Color color)
+		=> font.Draw(batch, text, position, justify, size, color);
 
-	public static void Text(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, Vector2 position,
-		Vector2 justify, float scale, Color color)
-	{
-		batch.PushMatrix(position, Vector2.Zero, Vector2.One * scale, 0);
-		batch.Text(font, text, Vector2.Zero, justify, color);
-		batch.PopMatrix();
-	}
+	public static void TextWrapped(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, Color color)
+		=> font.DrawWrapped(batch, text, position, Vector2.Zero, maxLineWidth, color);
+
+	public static void TextWrapped(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, Vector2 justify, Color color)
+		=> font.DrawWrapped(batch, text, position, justify, maxLineWidth, color);
+
+	public static void TextWrapped(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, float size, Color color)
+		=> font.DrawWrapped(batch, text, position, Vector2.Zero, maxLineWidth, size, color);
+
+	public static void TextWrapped(this Batcher batch, SpriteFont font, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, Vector2 justify, float size, Color color)
+		=> font.DrawWrapped(batch, text, position, justify, maxLineWidth, size, color);
+
+	public static void Text(this Batcher batch, ReadOnlySpan<char> text, Vector2 position, float size, Color color)
+		=> batch.GraphicsDevice.Defaults.SpriteFont.Draw(batch, text, position, Vector2.Zero, size, color);
+
+	public static void Text(this Batcher batch, ReadOnlySpan<char> text, Vector2 position, Vector2 justify, float size, Color color)
+		=> batch.GraphicsDevice.Defaults.SpriteFont.Draw(batch, text, position, justify, size, color);
+
+	public static void TextWrapped(this Batcher batch, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, float size, Color color)
+		=> batch.GraphicsDevice.Defaults.SpriteFont.DrawWrapped(batch, text, position, Vector2.Zero, maxLineWidth, size, color);
+
+	public static void TextWrapped(this Batcher batch, ReadOnlySpan<char> text, float maxLineWidth, Vector2 position, Vector2 justify, float size, Color color)
+		=> batch.GraphicsDevice.Defaults.SpriteFont.DrawWrapped(batch, text, position, justify, maxLineWidth, size, color);
 }

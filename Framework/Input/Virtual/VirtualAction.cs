@@ -17,12 +17,6 @@ public sealed class VirtualAction(Input input, string name, ActionBindingSet set
 	public List<ActionBindingSet.ActionEntry> Entries => Set.Entries;
 
 	/// <summary>
-	/// The Device Index
-	/// </summary>
-	[Obsolete("use ControllerIndex instead")]
-	public int Device { get => ControllerIndex; set => ControllerIndex = value; }
-
-	/// <summary>
 	/// How long before invoking the first Repeated signal
 	/// </summary>
 	public float RepeatDelay;
@@ -109,10 +103,10 @@ public sealed class VirtualAction(Input input, string name, ActionBindingSet set
 
 		if (Down && (time.Elapsed - Timestamp).TotalSeconds > RepeatDelay)
 		{
-			if (Time.OnInterval(
+			if (Calc.OnInterval(
 				(time.Elapsed - Timestamp).TotalSeconds - RepeatDelay,
 				time.Delta,
-				RepeatInterval, 0))
+				RepeatInterval))
 			{
 				Repeated = true;
 			}

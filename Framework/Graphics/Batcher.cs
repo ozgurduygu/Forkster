@@ -46,6 +46,18 @@ public class Batcher : IDisposable
 	public Matrix3x2 Matrix = Matrix3x2.Identity;
 
 	/// <summary>
+	/// Optional Vertex Storage Buffers to pass to the Draw Command.<br/>
+	/// Calling <see cref="Clear"/> will also clear these.
+	/// </summary>
+	public StackList4<StorageBuffer> VertexStorageBuffers;
+
+	/// <summary>
+	/// Optional Fragment Storage Buffers to pass to the Draw Command.<br/>
+	/// Calling <see cref="Clear"/> will also clear these.
+	/// </summary>
+	public StackList4<StorageBuffer> FragmentStorageBuffers;
+
+	/// <summary>
 	/// The current Scissor Value of the Batcher
 	/// </summary>
 	public RectInt? Scissor => currentBatch.Scissor;
@@ -115,11 +127,6 @@ public class Batcher : IDisposable
 		Clear();
 	}
 
-	~Batcher()
-	{
-		Dispose();
-	}
-
 	/// <summary>
 	/// Uploads the current state of the internal Mesh to the GPU
 	/// </summary>
@@ -135,9 +142,9 @@ public class Batcher : IDisposable
 	}
 
 	public void Dispose()
-	{
-		GC.SuppressFinalize(this);
-	}
+    {
+        mesh.Dispose();
+    }
 
 	/// <summary>
 	/// Clears the Batcher.
@@ -157,6 +164,8 @@ public class Batcher : IDisposable
 		layerStack.Clear();
 		samplerStack.Clear();
 		modeStack.Clear();
+		FragmentStorageBuffers.Clear();
+		VertexStorageBuffers.Clear();
 
 		foreach (var it in materialsUsed)
 			materialsPool.Enqueue(it);
@@ -215,58 +224,57 @@ public class Batcher : IDisposable
 		{
 			// remaining elements in the current batch
 			if (currentBatchInsert == i && currentBatch.Elements > 0)
-				RenderBatch(GraphicsDevice, defaultMaterial, mesh, target, currentBatch, matrix, viewport, scissor);
+				RenderBatch(target, currentBatch, matrix, viewport, scissor);
 
 			// render the batch
-			RenderBatch(GraphicsDevice, defaultMaterial, mesh, target, batches[i], matrix, viewport, scissor);
+			RenderBatch(target, batches[i], matrix, viewport, scissor);
 		}
 
 		// remaining elements in the current batch
 		if (currentBatchInsert == batches.Count && currentBatch.Elements > 0)
-			RenderBatch(GraphicsDevice, defaultMaterial, mesh, target, currentBatch, matrix, viewport, scissor);
+			RenderBatch(target, currentBatch, matrix, viewport, scissor);
+	}
 
-		static void RenderBatch(
-			GraphicsDevice device,
-			Material defaultMaterial,
-			Mesh mesh,
-			IDrawableTarget target,
-			in Batch batch,
-			in Matrix4x4 matrix,
-			in RectInt? viewport,
-			in RectInt? scissor)
+	private void RenderBatch(
+		IDrawableTarget target,
+		in Batch batch,
+		in Matrix4x4 matrix,
+		in RectInt? viewport,
+		in RectInt? scissor)
+	{
+		// get trimmed scissor value
+		var trimmed = scissor;
+		if (batch.Scissor.HasValue && trimmed.HasValue)
+			trimmed = batch.Scissor.Value.GetIntersection(trimmed.Value);
+		else if (batch.Scissor.HasValue)
+			trimmed = batch.Scissor;
+
+		// don't render if we're going to clip the entire visible contents
+		if (trimmed.HasValue && (trimmed.Value.Width <= 0 || trimmed.Value.Height <= 0))
+			return;
+
+		var texture = batch.Texture != null && !batch.Texture.IsDisposed ? batch.Texture : null;
+		var mat = batch.Material ?? defaultMaterial ?? throw new Exception("Default Material has not been instantiated");
+
+		// set Fragment Sampler 0 to the texture to be drawn
+		mat.Fragment.Samplers[0] = new(texture, batch.Sampler);
+
+		// set Vertex Matrix, always assumed to be in slot 0 as the first data
+		mat.Vertex.SetUniformBuffer(matrix);
+
+		GraphicsDevice.Draw(new(target, mesh, mat)
 		{
-			// get trimmed scissor value
-			var trimmed = scissor;
-			if (batch.Scissor.HasValue && trimmed.HasValue)
-				trimmed = batch.Scissor.Value.GetIntersection(trimmed.Value);
-			else if (batch.Scissor.HasValue)
-				trimmed = batch.Scissor;
-
-			// don't render if we're going to clip the entire visible contents
-			if (trimmed.HasValue && (trimmed.Value.Width <= 0 || trimmed.Value.Height <= 0))
-				return;
-
-			var texture = batch.Texture != null && !batch.Texture.IsDisposed ? batch.Texture : null;
-			var mat = batch.Material ?? defaultMaterial;
-
-			// set Fragment Sampler 0 to the texture to be drawn
-			mat.Fragment.Samplers[0] = new(texture, batch.Sampler);
-
-			// set Vertex Matrix, always assumed to be in slot 0 as the first data
-			mat.Vertex.SetUniformBuffer(matrix);
-
-			device.Draw(new(target, mesh, mat)
-			{
-				Viewport = viewport,
-				Scissor = trimmed,
-				BlendMode = batch.Blend,
-				IndexOffset = batch.Offset * 3,
-				IndexCount = batch.Elements * 3,
-				DepthWriteEnabled = false,
-				DepthTestEnabled = false,
-				CullMode = CullMode.None
-			});
-		}
+			Viewport = viewport,
+			Scissor = trimmed,
+			BlendMode = batch.Blend,
+			IndexOffset = batch.Offset * 3,
+			IndexCount = batch.Elements * 3,
+			DepthWriteEnabled = false,
+			DepthTestEnabled = false,
+			CullMode = CullMode.None,
+			VertexStorageBuffers = VertexStorageBuffers,
+			FragmentStorageBuffers = FragmentStorageBuffers
+		});
 	}
 
 	#endregion
@@ -789,10 +797,6 @@ public class Batcher : IDisposable
 		Quad(dd, quad.D, quad.A, aa, color);
 	}
 
-	[Obsolete("Use QuadLine instead")]
-	public void QuadLines(in Vector2 a, in Vector2 b, in Vector2 c, in Vector2 d, float lineWeight, in Color color)
-		=> QuadLine(a, b, c, d, lineWeight, color);
-
 	#endregion
 
 	#region Triangle
@@ -901,63 +905,66 @@ public class Batcher : IDisposable
 	#region Rect
 
 	public void Rect(in Rect rect, Color color)
-	{
-		Quad(
+		=> Quad(
 			new(rect.X, rect.Y),
 			new(rect.X + rect.Width, rect.Y),
 			new(rect.X + rect.Width, rect.Y + rect.Height),
 			new(rect.X, rect.Y + rect.Height),
-			color);
-	}
+			color
+		);
 
 	public void Rect(in Vector2 position, in Vector2 size, Color color)
-	{
-		Quad(
+		=> Quad(
 			position,
-			position + new Vector2(size.X, 0),
+			position + size with { Y = 0 },
 			position + new Vector2(size.X, size.Y),
-			position + new Vector2(0, size.Y),
-			color);
-	}
+			position + size with { X = 0 },
+			color
+		);
+
+	public void Rect(in Vector2 position, float width, float height, Color color)
+		=> Quad(
+			position,
+			position + new Vector2(width, 0),
+			position + new Vector2(width, height),
+			position + new Vector2(0, height),
+			color
+		);
 
 	public void Rect(float x, float y, float width, float height, Color color)
-	{
-		Quad(
+		=> Quad(
 			new(x, y),
 			new(x + width, y),
 			new(x + width, y + height),
-			new(x, y + height), color);
-	}
+			new(x, y + height), color
+		);
 
 	public void Rect(in Rect rect, Color c0, Color c1, Color c2, Color c3)
-	{
-		Quad(
+		=> Quad(
 			new(rect.X, rect.Y),
 			new(rect.X + rect.Width, rect.Y),
 			new(rect.X + rect.Width, rect.Y + rect.Height),
 			new(rect.X, rect.Y + rect.Height),
-			c0, c1, c2, c3);
-	}
+			c0, c1, c2, c3
+		);
 
 	public void Rect(in Vector2 position, in Vector2 size, Color c0, Color c1, Color c2, Color c3)
-	{
-		Quad(
+		=> Quad(
 			position,
-			position + new Vector2(size.X, 0),
+			position + size with { Y = 0 },
 			position + new Vector2(size.X, size.Y),
-			position + new Vector2(0, size.Y),
-			c0, c1, c2, c3);
-	}
+			position + size with { X = 0 },
+			c0, c1, c2, c3
+		);
 
 	public void Rect(float x, float y, float width, float height, Color c0, Color c1, Color c2, Color c3)
-	{
-		Quad(
+		=> Quad(
 			new(x, y),
 			new(x + width, y),
 			new(x + width, y + height),
 			new(x, y + height),
-			c0, c1, c2, c3);
-	}
+			c0, c1, c2, c3
+		);
 
 	public void RectLine(in Rect rect, float lineWeight, Color color)
 	{
@@ -1016,6 +1023,10 @@ public class Batcher : IDisposable
 		}
 		else
 		{
+			// TODO:
+			// replace this with a single convex shape (like how a circle is drawn)
+			// instead of this monstrosity
+
 			// get corners
 			var r0_tl = rect.TopLeft;
 			var r0_tr = r0_tl + new Vector2(r0, 0);
@@ -1037,42 +1048,39 @@ public class Batcher : IDisposable
 			var r3_bl = r3_tl + new Vector2(0, r3);
 			var r3_br = r3_tl + new Vector2(r3, r3);
 
-			Append(
-				vertices: [
-					new(Vector2.Transform(r0_tr, Matrix), color, FillMode), // 0
-					new(Vector2.Transform(r0_br, Matrix), color, FillMode), // 1
-					new(Vector2.Transform(r0_bl, Matrix), color, FillMode), // 2
+			// upload vertices / indices
+			{
+				Request(12, 30, out var vertexDest, out var indexDest, out var vs);
 
-					new(Vector2.Transform(r1_tl, Matrix), color, FillMode), // 3
-					new(Vector2.Transform(r1_br, Matrix), color, FillMode), // 4
-					new(Vector2.Transform(r1_bl, Matrix), color, FillMode), // 5
+				vertexDest[0] = new(Vector2.Transform(r0_tr, Matrix), color, FillMode);
+				vertexDest[1] = new(Vector2.Transform(r0_br, Matrix), color, FillMode);
+				vertexDest[2] = new(Vector2.Transform(r0_bl, Matrix), color, FillMode);
+				vertexDest[3] = new(Vector2.Transform(r1_tl, Matrix), color, FillMode);
+				vertexDest[4] = new(Vector2.Transform(r1_br, Matrix), color, FillMode);
+				vertexDest[5] = new(Vector2.Transform(r1_bl, Matrix), color, FillMode);
+				vertexDest[6] = new(Vector2.Transform(r2_tl, Matrix), color, FillMode);
+				vertexDest[7] = new(Vector2.Transform(r2_tr, Matrix), color, FillMode);
+				vertexDest[8] = new(Vector2.Transform(r2_bl, Matrix), color, FillMode);
+				vertexDest[9] = new(Vector2.Transform(r3_tl, Matrix), color, FillMode);
+				vertexDest[10] = new(Vector2.Transform(r3_tr, Matrix), color, FillMode);
+				vertexDest[11] = new(Vector2.Transform(r3_br, Matrix), color, FillMode);
 
-					new(Vector2.Transform(r2_tl, Matrix), color, FillMode), // 6
-					new(Vector2.Transform(r2_tr, Matrix), color, FillMode), // 7
-					new(Vector2.Transform(r2_bl, Matrix), color, FillMode), // 8
-
-					new(Vector2.Transform(r3_tl, Matrix), color, FillMode), // 9
-					new(Vector2.Transform(r3_tr, Matrix), color, FillMode), // 10
-					new(Vector2.Transform(r3_br, Matrix), color, FillMode), // 11
-				],
-				indices: [
-					// top quad
-						00, /* r0b */ 03, /* r1a */ 05, /* r1d */
-						00, /* r0b */ 05, /* r1d */ 01, /* r0c */
-					// left quad
-						02, /* r0d */ 01, /* r0c */ 10, /* r3b */
-						02, /* r0d */ 10, /* r3b */ 09, /* r3a */
-					// right quad
-						05, /* r1d */ 04, /* r1c */ 07, /* r2b */
-						05, /* r1d */ 07, /* r2b */ 06, /* r2a */
-					// bottom quad
-						10, /* r3b */ 06, /* r2a */ 08, /* r2d */
-						10, /* r3b */ 08, /* r2d */ 11, /* r3c */
-					// center quad
-						01, /* r0c */ 05, /* r1d */ 06, /* r2a */
-						01, /* r0c */ 06, /* r2a */ 10, /* r3b */
-				]
-			);
+				// top quad
+				indexDest[00] = vs + 00; /* r0b */ indexDest[01] = vs + 03; /* r1a */ indexDest[02] = vs + 05; /* r1d */
+				indexDest[03] = vs + 00; /* r0b */ indexDest[04] = vs + 05; /* r1d */ indexDest[05] = vs + 01; /* r0c */
+				// left quad
+				indexDest[06] = vs + 02; /* r0d */ indexDest[07] = vs + 01; /* r0c */ indexDest[08] = vs + 10; /* r3b */
+				indexDest[09] = vs + 02; /* r0d */ indexDest[10] = vs + 10; /* r3b */ indexDest[11] = vs + 09; /* r3a */
+				// right quad
+				indexDest[12] = vs + 05; /* r1d */ indexDest[13] = vs + 04; /* r1c */ indexDest[14] = vs + 07; /* r2b */
+				indexDest[15] = vs + 05; /* r1d */ indexDest[16] = vs + 07; /* r2b */ indexDest[17] = vs + 06; /* r2a */
+				// bottom quad
+				indexDest[18] = vs + 10; /* r3b */ indexDest[19] = vs + 06; /* r2a */ indexDest[20] = vs + 08; /* r2d */
+				indexDest[21] = vs + 10; /* r3b */ indexDest[22] = vs + 08; /* r2d */ indexDest[23] = vs + 11; /* r3c */
+				// center quad
+				indexDest[24] = vs + 01; /* r0c */ indexDest[25] = vs + 05; /* r1d */ indexDest[26] = vs + 06; /* r2a */
+				indexDest[27] = vs + 01; /* r0c */ indexDest[28] = vs + 06; /* r2a */ indexDest[29] = vs + 10; /* r3b */
+			}
 
 			var left = Calc.PI;
 			var right = 0.0f;
@@ -1499,6 +1507,36 @@ public class Batcher : IDisposable
 			color);
 
 		Matrix = was;
+	}
+
+	public void ImageJustified(in Subtexture subtex, in Vector2 position, in Vector2 justify, in Color color)
+	{
+		var pos = position - subtex.Size * justify;
+		Quad(subtex.Texture,
+			pos + subtex.DrawCoords[0], pos + subtex.DrawCoords[1], pos + subtex.DrawCoords[2], pos + subtex.DrawCoords[3],
+			subtex.TexCoords[0], subtex.TexCoords[1], subtex.TexCoords[2], subtex.TexCoords[3],
+			color);
+	}
+
+	public void ImageJustified(in Subtexture subtex, in Vector2 position, in Vector2 justify, float scale, in Color color)
+	{
+		var pos = position - subtex.Size * scale * justify;
+		Quad(subtex.Texture,
+			pos + subtex.DrawCoords[0] * scale, pos + subtex.DrawCoords[1] * scale, pos + subtex.DrawCoords[2] * scale, pos + subtex.DrawCoords[3] * scale,
+			subtex.TexCoords[0], subtex.TexCoords[1], subtex.TexCoords[2], subtex.TexCoords[3],
+			color);
+	}
+
+	public void ImageJustified(in Subtexture subtex, in Rect clip, in Vector2 position, in Vector2 justify, float scale, in Color color)
+	{
+		var (source, frame) = subtex.GetClip(clip);
+		var tex = new Subtexture(subtex.Texture, source, frame);
+
+		var pos = position - tex.Size * scale * justify;
+		Quad(tex.Texture,
+			pos + tex.DrawCoords[0] * scale, pos + tex.DrawCoords[1] * scale, pos + tex.DrawCoords[2] * scale, pos + tex.DrawCoords[3] * scale,
+			tex.TexCoords[0], tex.TexCoords[1], tex.TexCoords[2], tex.TexCoords[3],
+			color);
 	}
 
 	public void ImageStretch(in Subtexture subtex, in Rect rect, Color color)
